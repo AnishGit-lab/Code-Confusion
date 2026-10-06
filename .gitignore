@@ -1,0 +1,31 @@
+@"
+# Python virtual environments
+.venv/
+venv/
+env/
+.venv-1/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# VS Code
+.vscode/
+
+# PaddleOCR / model cache
+.paddlex/
+.paddleocr/
+
+# Generated uploaded/protected images
+uploads/
+
+# Environment / secrets
+.env
+*.env
+
+# OS files
+.DS_Store
+Thumbs.db
+"@ | Set-Content .gitignore

@@ -1,49 +1,30 @@
-def calculate_risk(detections):
+RISK_SCORES = {
+    "EMAIL": 40,
+    "PHONE": 60,
+    "ID_NUMBER": 30,
+    "QR": 40,
+    "FACE": 50,
+    "GOVERNMENT_ID": 45,
+    "PASSWORD": 100,
+    "API_KEY": 100,
+    "ADDRESS": 60,
+    "NAME": 20,
+    "DATE_OF_BIRTH": 45,
+    "BANK_ACCOUNT": 60
+}
+
+
+def calculate_average_risk(detections):
 
     if not detections:
-        return {
-            "average_score": 0,
-            "detections": []
-        }
+        return 0.0
 
-    scores = []
+    total = sum(
+        detection["risk"]
+        for detection in detections
+    )
 
-    for detection in detections:
-        score = detection["risk"]
-        scores.append(score)
-
-        print(
-            detection["type"],
-            "→ Risk Score:",
-            score
-        )
-
-    average_score = sum(scores) / len(scores)
-
-    return {
-        "average_score": average_score,
-        "detections": detections
-    }
-
-
-detections = [
-    {
-        "type": "EMAIL",
-        "value": "test@example.com",
-        "risk": 40
-    },
-    {
-        "type": "PHONE",
-        "value": "010-1234-5678",
-        "risk": 60
-    },
-    {
-        "type": "STUDENT_ID",
-        "value": "2024891090",
-        "risk": 70
-    }
-]
-
-result = calculate_risk(detections)
-
-print("Average Risk Score:", round(result["average_score"], 2))
+    return round(
+        total / len(detections),
+        2
+    )
