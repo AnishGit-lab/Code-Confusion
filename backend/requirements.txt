@@ -3,6 +3,8 @@ uvicorn[standard]
 python-multipart
 pillow
 opencv-python
+numpy
 paddleocr
 paddlepaddle
 phonenumbers
+pymupdf
