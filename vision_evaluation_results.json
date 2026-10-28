@@ -1,0 +1,200 @@
+{
+  "images": 8,
+  "metrics": {
+    "FACE": {
+      "tp": 4,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "QR": {
+      "tp": 4,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    }
+  },
+  "average_latency_seconds": 0.3316,
+  "images_detail": [
+    {
+      "image": "face_real_01.jpg",
+      "expected": "FACE",
+      "predicted": [
+        "FACE"
+      ],
+      "latency_seconds": 1.3252,
+      "detections": [
+        {
+          "type": "FACE",
+          "value": "Face detected",
+          "confidence": 0.9,
+          "box": [
+            405,
+            116,
+            520,
+            231
+          ],
+          "source": "VISION"
+        }
+      ]
+    },
+    {
+      "image": "face_real_02.jpg",
+      "expected": "FACE",
+      "predicted": [
+        "FACE"
+      ],
+      "latency_seconds": 0.2024,
+      "detections": [
+        {
+          "type": "FACE",
+          "value": "Face detected",
+          "confidence": 0.9,
+          "box": [
+            390,
+            109,
+            520,
+            239
+          ],
+          "source": "VISION"
+        }
+      ]
+    },
+    {
+      "image": "face_real_03.jpg",
+      "expected": "FACE",
+      "predicted": [
+        "FACE"
+      ],
+      "latency_seconds": 0.2182,
+      "detections": [
+        {
+          "type": "FACE",
+          "value": "Face detected",
+          "confidence": 0.9,
+          "box": [
+            375,
+            112,
+            522,
+            259
+          ],
+          "source": "VISION"
+        }
+      ]
+    },
+    {
+      "image": "face_real_04.jpg",
+      "expected": "FACE",
+      "predicted": [
+        "FACE"
+      ],
+      "latency_seconds": 0.2084,
+      "detections": [
+        {
+          "type": "FACE",
+          "value": "Face detected",
+          "confidence": 0.9,
+          "box": [
+            359,
+            111,
+            530,
+            282
+          ],
+          "source": "VISION"
+        }
+      ]
+    },
+    {
+      "image": "qr_valid_01.png",
+      "expected": "QR",
+      "predicted": [
+        "QR"
+      ],
+      "latency_seconds": 0.1635,
+      "detections": [
+        {
+          "type": "QR",
+          "value": "https://priviscan.test/week7/1",
+          "confidence": 0.99,
+          "box": [
+            120,
+            120,
+            410,
+            409
+          ],
+          "source": "VISION"
+        }
+      ]
+    },
+    {
+      "image": "qr_valid_02.png",
+      "expected": "QR",
+      "predicted": [
+        "QR"
+      ],
+      "latency_seconds": 0.1891,
+      "detections": [
+        {
+          "type": "QR",
+          "value": "https://priviscan.test/week7/2",
+          "confidence": 0.99,
+          "box": [
+            120,
+            120,
+            410,
+            409
+          ],
+          "source": "VISION"
+        }
+      ]
+    },
+    {
+      "image": "qr_valid_03.png",
+      "expected": "QR",
+      "predicted": [
+        "QR"
+      ],
+      "latency_seconds": 0.1678,
+      "detections": [
+        {
+          "type": "QR",
+          "value": "https://priviscan.test/week7/3",
+          "confidence": 0.99,
+          "box": [
+            120,
+            120,
+            410,
+            409
+          ],
+          "source": "VISION"
+        }
+      ]
+    },
+    {
+      "image": "qr_valid_04.png",
+      "expected": "QR",
+      "predicted": [
+        "QR"
+      ],
+      "latency_seconds": 0.1781,
+      "detections": [
+        {
+          "type": "QR",
+          "value": "https://priviscan.test/week7/4",
+          "confidence": 0.99,
+          "box": [
+            120,
+            120,
+            410,
+            409
+          ],
+          "source": "VISION"
+        }
+      ]
+    }
+  ]
+}

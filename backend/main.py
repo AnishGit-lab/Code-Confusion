@@ -1,876 +1,409 @@
-from pathlib import Path
-from uuid import uuid4
-import html
+from __future__ import annotations
+
+import json
+import os
 import shutil
+import uuid
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from fastapi import (
-    FastAPI,
-    UploadFile,
-    File,
-    Form
-)
+from fastapi import FastAPI, File, Form, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse
 
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
-
-from backend.analyze import analyze_image
-from backend.risk.scoring import (
-    calculate_average_risk
-)
-from backend.protection import (
-    protect_image
-)
+from backend.analyze import analyze_image, analyze_text
+from backend.protection import protect_image
+from backend.risk.scoring import calculate_average_risk
 
 
-# ============================================================
-# APP
-# ============================================================
+BASE_DIR = Path(__file__).resolve().parent.parent
 
-app = FastAPI(
-    title="PriviScan"
-)
-
-
-# ============================================================
-# UPLOAD DIRECTORY
-# ============================================================
-
-UPLOAD_DIR = Path(
-    "uploads"
-)
+UPLOAD_DIR = BASE_DIR / "uploads"
+PROTECTED_DIR = BASE_DIR / "protected"
 
 UPLOAD_DIR.mkdir(
-    exist_ok=True
+    parents=True,
+    exist_ok=True,
+)
+
+PROTECTED_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
 )
 
 
-app.mount(
-    "/uploads",
-    StaticFiles(
-        directory=str(
-            UPLOAD_DIR
-        )
-    ),
-    name="uploads"
+app = FastAPI(
+    title="PriviScan",
+    description="Privacy risk assessment and sensitive information protection system",
+    version="1.0.0",
 )
 
 
-# ============================================================
-# HOME
-# ============================================================
+HTML_PAGE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>PriviScan</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1100px;
+            margin: 40px auto;
+            padding: 20px;
+        }
+
+        h1 {
+            margin-bottom: 5px;
+        }
+
+        .card {
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        button {
+            padding: 10px 18px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        th, td {
+            padding: 10px;
+            border: 1px solid #ddd;
+            text-align: left;
+        }
+
+        pre {
+            background: #f5f5f5;
+            padding: 15px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+
+<body>
+
+<h1>PriviScan</h1>
+<p>Privacy Risk Assessment and Sensitive Information Protection</p>
+
+<div class="card">
+    <h2>Upload Image</h2>
+
+    <form id="uploadForm">
+        <input
+            type="file"
+            id="file"
+            name="file"
+            accept="image/*"
+            required
+        >
+
+        <button type="submit">
+            Analyze
+        </button>
+    </form>
+</div>
+
+<div id="result"></div>
+
+<script>
+
+const form = document.getElementById("uploadForm");
+
+form.addEventListener("submit", async function(event) {
+
+    event.preventDefault();
+
+    const file = document.getElementById("file").files[0];
+
+    const data = new FormData();
+
+    data.append("file", file);
+
+    const response = await fetch("/analyze", {
+        method: "POST",
+        body: data
+    });
+
+    const result = await response.json();
+
+    renderResult(result);
+});
+
+
+function renderResult(result) {
+
+    const container = document.getElementById("result");
+
+    let html = `
+        <div class="card">
+            <h2>Analysis Report</h2>
+
+            <p>
+                <strong>Final Risk:</strong>
+                ${result.final_risk_score}
+            </p>
+
+            <p>
+                <strong>Risk Level:</strong>
+                ${result.risk_level}
+            </p>
+
+            <p>
+                <strong>Total Detections:</strong>
+                ${result.total_detections}
+            </p>
+
+            <p>
+                <strong>Average Risk:</strong>
+                ${result.average_risk_score}
+            </p>
+    `;
+
+    if (!result.detections || result.detections.length === 0) {
+
+        html += `
+            <p>No sensitive information detected.</p>
+        `;
+
+    } else {
+
+        html += `
+            <table>
+                <tr>
+                    <th>Type</th>
+                    <th>Value</th>
+                    <th>Risk Score</th>
+                    <th>Confidence</th>
+                    <th>Box</th>
+                </tr>
+        `;
+
+        for (const detection of result.detections) {
+
+            html += `
+                <tr>
+                    <td>${escapeHtml(detection.type)}</td>
+                    <td>${escapeHtml(detection.value)}</td>
+                    <td>${detection.risk_score}</td>
+                    <td>${detection.confidence}</td>
+                    <td>${escapeHtml(
+                        JSON.stringify(detection.box)
+                    )}</td>
+                </tr>
+            `;
+        }
+
+        html += "</table>";
+    }
+
+    html += `
+        </div>
+    `;
+
+    container.innerHTML = html;
+}
+
+
+function escapeHtml(value) {
+
+    return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+}
+
+</script>
+
+</body>
+</html>
+"""
+
 
 @app.get(
     "/",
-    response_class=HTMLResponse
+    response_class=HTMLResponse,
 )
-async def home():
-
-    return """
-    <!DOCTYPE html>
-
-    <html>
-
-    <head>
-
-        <title>PriviScan</title>
-
-        <style>
-
-            body {
-                font-family: Arial, sans-serif;
-                max-width: 850px;
-                margin: 60px auto;
-                padding: 20px;
-                text-align: center;
-            }
-
-            .box {
-                border: 2px dashed #888;
-                padding: 45px;
-                border-radius: 15px;
-            }
-
-            input {
-                margin: 20px;
-                font-size: 16px;
-            }
-
-            button {
-                padding: 12px 25px;
-                font-size: 16px;
-                cursor: pointer;
-            }
-
-        </style>
-
-    </head>
+def home():
+    return HTML_PAGE
 
 
-    <body>
-
-        <h1>
-            PriviScan
-        </h1>
-
-        <p>
-            Intelligent Privacy Risk Assessment
-        </p>
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "service": "PriviScan",
+    }
 
 
-        <div class="box">
-
-            <form
-                action="/analyze"
-                method="post"
-                enctype="multipart/form-data"
-            >
-
-                <input
-                    type="file"
-                    name="file"
-                    accept="image/*"
-                    required
-                >
-
-                <br>
-
-                <button type="submit">
-                    Analyze Image
-                </button>
-
-            </form>
-
-        </div>
-
-    </body>
-
-    </html>
-    """
-
-
-# ============================================================
-# ANALYZE
-# ============================================================
-
-@app.post(
-    "/analyze",
-    response_class=HTMLResponse
-)
-async def analyze(
-    file: UploadFile = File(...)
+@app.post("/analyze")
+async def analyze_endpoint(
+    file: UploadFile = File(...),
 ):
+    extension = Path(
+        file.filename or ""
+    ).suffix.lower()
 
-    # --------------------------------------------------------
-    # CHECK IMAGE
-    # --------------------------------------------------------
+    allowed = {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".bmp",
+        ".webp",
+    }
 
-    if (
-        not file.content_type
-        or not file.content_type.startswith(
-            "image/"
+    if extension not in allowed:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "Unsupported image format"
+            },
         )
-    ):
 
-        return """
-
-        <h1>
-            PriviScan
-        </h1>
-
-        <p>
-            Please upload a JPG or PNG image.
-        </p>
-
-        <a href="/">
-            Go Back
-        </a>
-
-        """
-
-
-    # --------------------------------------------------------
-    # FILE NAME
-    # --------------------------------------------------------
-
-    original_name = Path(
-        file.filename
-    ).name
-
-
-    stored_name = (
-        uuid4().hex
-        + "_"
-        + original_name
+    filename = (
+        f"{uuid.uuid4().hex}"
+        f"{extension}"
     )
 
+    destination = UPLOAD_DIR / filename
 
-    file_path = (
-        UPLOAD_DIR
-        / stored_name
-    )
-
-
-    # --------------------------------------------------------
-    # SAVE IMAGE
-    # --------------------------------------------------------
-
-    with file_path.open(
-        "wb"
-    ) as buffer:
-
+    with destination.open("wb") as output:
         shutil.copyfileobj(
             file.file,
-            buffer
+            output,
         )
-
-
-    # --------------------------------------------------------
-    # ANALYZE
-    # --------------------------------------------------------
 
     try:
+        result = analyze_image(
+            str(destination),
+            verbose=False,
+        )
 
-        results = analyze_image(
-            str(file_path)
+        return result
+
+    except Exception as exc:
+
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": str(exc)
+            },
         )
 
 
-        average_score = (
-            calculate_average_risk(
-                results
-            )
-        )
-
-
-    except Exception as error:
-
-        return f"""
-
-        <h1>
-            PriviScan Error
-        </h1>
-
-        <p>
-            {html.escape(
-                str(error)
-            )}
-        </p>
-
-        <a href="/">
-            Try Again
-        </a>
-
-        """
-
-
-    # ========================================================
-    # RESULT PAGE
-    # ========================================================
-
-    page = f"""
-
-    <!DOCTYPE html>
-
-    <html>
-
-    <head>
-
-        <title>
-            PriviScan Result
-        </title>
-
-
-        <style>
-
-            body {{
-                font-family: Arial, sans-serif;
-                max-width: 900px;
-                margin: 40px auto;
-                padding: 20px;
-            }}
-
-            h1 {{
-                text-align: center;
-            }}
-
-            .summary {{
-                background: #f2f2f2;
-                padding: 20px;
-                border-radius: 10px;
-                text-align: center;
-                margin: 25px 0;
-            }}
-
-            .detection {{
-                border: 1px solid #ddd;
-                padding: 18px;
-                margin: 12px 0;
-                border-radius: 10px;
-            }}
-
-            .protection {{
-                margin-top: 30px;
-                border: 2px solid #888;
-                padding: 25px;
-                border-radius: 10px;
-            }}
-
-            .method {{
-                margin-top: 20px;
-            }}
-
-            button {{
-                padding: 12px 22px;
-                cursor: pointer;
-                margin-top: 15px;
-                font-size: 16px;
-            }}
-
-            select {{
-                padding: 8px;
-                font-size: 16px;
-            }}
-
-        </style>
-
-    </head>
-
-
-    <body>
-
-        <h1>
-            PriviScan Analysis
-        </h1>
-
-
-        <p>
-
-            <strong>
-                File:
-            </strong>
-
-            {html.escape(
-                original_name
-            )}
-
-        </p>
-
-
-        <div class="summary">
-
-            <h2>
-                Average Risk Score:
-                {average_score:.2f}
-            </h2>
-
-
-            <p>
-
-                Total Detections:
-                {len(results)}
-
-            </p>
-
-        </div>
-
-    """
-
-
-    # ========================================================
-    # DETECTIONS
-    # ========================================================
-
-    if results:
-
-        page += """
-
-        <h2>
-            Detected Sensitive Information
-        </h2>
-
-
-        <form
-            action="/protect"
-            method="post"
-        >
-
-
-        """
-
-
-        page += f"""
-
-        <input
-            type="hidden"
-            name="filename"
-            value="{html.escape(
-                stored_name
-            )}"
-        >
-
-        """
-
-
-        for index, result in enumerate(
-            results
-        ):
-
-            confidence_html = ""
-
-
-            if (
-                result.get(
-                    "confidence"
-                ) is not None
-            ):
-
-                confidence_html = f"""
-
-                <p>
-
-                    <strong>
-                        Confidence:
-                    </strong>
-
-                    {result["confidence"]:.4f}
-
-                </p>
-
-                """
-
-
-            page += f"""
-
-            <div class="detection">
-
-                <label>
-
-                    <input
-                        type="checkbox"
-                        name="selected_ids"
-                        value="{index}"
-                    >
-
-                    <strong>
-                        Select
-                    </strong>
-
-                </label>
-
-
-                <p>
-
-                    <strong>
-                        Type:
-                    </strong>
-
-                    {html.escape(
-                        str(
-                            result["type"]
-                        )
-                    )}
-
-                </p>
-
-
-                <p>
-
-                    <strong>
-                        Value:
-                    </strong>
-
-                    {html.escape(
-                        str(
-                            result["value"]
-                        )
-                    )}
-
-                </p>
-
-
-                <p>
-
-                    <strong>
-                        Risk Score:
-                    </strong>
-
-                    {result["risk"]}
-
-                </p>
-
-
-                {confidence_html}
-
-
-                <p>
-
-                    <strong>
-                        Box:
-                    </strong>
-
-                    {html.escape(
-                        str(
-                            result["box"]
-                        )
-                    )}
-
-                </p>
-
-            </div>
-
-            """
-
-
-        # ====================================================
-        # PROTECTION
-        # ====================================================
-
-        page += """
-
-        <div class="protection">
-
-            <h2>
-                Protection Options
-            </h2>
-
-
-            <p>
-                Choose how PriviScan should
-                protect the detected information.
-            </p>
-
-
-            <h3>
-                Protection Mode
-            </h3>
-
-
-            <label>
-
-                <input
-                    type="radio"
-                    name="mode"
-                    value="automatic"
-                    checked
-                >
-
-                Automatic
-
-            </label>
-
-
-            <br><br>
-
-
-            <label>
-
-                <input
-                    type="radio"
-                    name="mode"
-                    value="manual"
-                >
-
-                Manual
-
-            </label>
-
-
-            <div class="method">
-
-                <h3>
-                    Protection Method
-                </h3>
-
-
-                <select
-                    name="action"
-                >
-
-                    <option value="blur">
-                        Blur
-                    </option>
-
-
-                    <option value="blackout">
-                        Blackout
-                    </option>
-
-
-                    <option value="star">
-                        Star (*)
-                    </option>
-
-
-                    <option value="random">
-                        Random Alphabet
-                    </option>
-
-
-                    <option value="hashtag">
-                        Hashtag (#)
-                    </option>
-
-                </select>
-
-            </div>
-
-
-            <br>
-
-
-            <button
-                type="submit"
-            >
-
-                Protect Image
-
-            </button>
-
-
-        </div>
-
-
-        </form>
-
-        """
-
-
-    else:
-
-        page += """
-
-        <div class="summary">
-
-            <h2>
-                No sensitive information detected.
-            </h2>
-
-        </div>
-
-        """
-
-
-    page += """
-
-        <br>
-
-        <p style="text-align:center;">
-
-            <a href="/">
-                Analyze Another Image
-            </a>
-
-        </p>
-
-
-    </body>
-
-    </html>
-
-    """
-
-
-    return page
-
-
-# ============================================================
-# PROTECT IMAGE
-# ============================================================
-
-@app.post(
-    "/protect",
-    response_class=HTMLResponse
-)
-async def protect(
-    filename: str = Form(...),
-    mode: str = Form(...),
-    action: str = Form(...),
-    selected_ids: list[int] | None = Form(None)
+@app.post("/analyze-text")
+async def analyze_text_endpoint(
+    text: str = Form(...),
 ):
+    try:
+        return analyze_text(text)
 
-    filename = Path(
-        filename
-    ).name
+    except Exception as exc:
+
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": str(exc)
+            },
+        )
 
 
-    input_path = (
-        UPLOAD_DIR
-        / filename
+@app.post("/protect")
+async def protect_endpoint(
+    image_path: str = Form(...),
+    detections: str = Form("[]"),
+    mode: str = Form("automatic"),
+    method: str = Form("blur"),
+    selected_indices: str = Form(""),
+):
+    try:
+
+        parsed_detections = json.loads(
+            detections
+        )
+
+        if not isinstance(
+            parsed_detections,
+            list,
+        ):
+            parsed_detections = []
+
+        indices = []
+
+        if selected_indices.strip():
+
+            indices = [
+                int(x.strip())
+                for x in selected_indices.split(",")
+                if x.strip()
+            ]
+
+        source_path = Path(image_path)
+
+        output_path = PROTECTED_DIR / (
+            f"{source_path.stem}_protected"
+            f"{source_path.suffix}"
+        )
+
+        protected = protect_image(
+            image_path,
+            detections=parsed_detections,
+            mode=mode,
+            method=method,
+            selected_indices=indices,
+            output_path=str(output_path),
+        )
+
+        return {
+            "status": "success",
+            "protected_image": protected,
+            "mode": mode,
+            "method": method,
+        }
+
+    except Exception as exc:
+
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": str(exc)
+            },
+        )
+
+
+@app.post("/redact")
+async def redact_endpoint(
+    image_path: str = Form(...),
+    detections: str = Form("[]"),
+    mode: str = Form("automatic"),
+    method: str = Form("blur"),
+):
+    return await protect_endpoint(
+        image_path=image_path,
+        detections=detections,
+        mode=mode,
+        method=method,
+        selected_indices="",
     )
 
 
-    if not input_path.exists():
+if __name__ == "__main__":
+    import uvicorn
 
-        return """
-
-        <h1>
-            PriviScan
-        </h1>
-
-        <p>
-            Original image was not found.
-        </p>
-
-        <a href="/">
-            Go Back
-        </a>
-
-        """
-
-
-    try:
-
-        # Analyze image again
-        detections = analyze_image(
-            str(input_path)
-        )
-
-
-        protected_name = (
-            "protected_"
-            + uuid4().hex[:8]
-            + "_"
-            + Path(filename).name
-        )
-
-
-        output_path = (
-            UPLOAD_DIR
-            / protected_name
-        )
-
-
-        protect_image(
-            str(input_path),
-            str(output_path),
-            detections,
-            mode=mode,
-            action=action,
-            selected_ids=selected_ids
-        )
-
-
-    except Exception as error:
-
-        return f"""
-
-        <h1>
-            PriviScan Protection Error
-        </h1>
-
-        <p>
-            {html.escape(
-                str(error)
-            )}
-        </p>
-
-        <a href="/">
-            Go Back
-        </a>
-
-        """
-
-
-    return f"""
-
-    <!DOCTYPE html>
-
-    <html>
-
-    <head>
-
-        <title>
-            PriviScan Protected Image
-        </title>
-
-
-        <style>
-
-            body {{
-                font-family: Arial, sans-serif;
-                max-width: 950px;
-                margin: 40px auto;
-                padding: 20px;
-                text-align: center;
-            }}
-
-            img {{
-                max-width: 100%;
-                border: 1px solid #ddd;
-                margin: 20px 0;
-            }}
-
-        </style>
-
-    </head>
-
-
-    <body>
-
-        <h1>
-            Protected Image
-        </h1>
-
-
-        <p>
-
-            <strong>
-                Mode:
-            </strong>
-
-            {html.escape(
-                mode
-            )}
-
-        </p>
-
-
-        <p>
-
-            <strong>
-                Protection Method:
-            </strong>
-
-            {html.escape(
-                action
-            )}
-
-        </p>
-
-
-        <img
-            src="/uploads/{html.escape(
-                protected_name
-            )}"
-            alt="Protected Image"
-        >
-
-
-        <br>
-
-
-        <a
-            href="/uploads/{html.escape(
-                protected_name
-            )}"
-            target="_blank"
-        >
-
-            Open Protected Image
-
-        </a>
-
-
-        <br><br>
-
-
-        <a href="/">
-            Analyze Another Image
-        </a>
-
-
-    </body>
-
-    </html>
-
-    """
+    uvicorn.run(
+        "backend.main:app",
+        host="127.0.0.1",
+        port=8000,
+        reload=True,
+    )

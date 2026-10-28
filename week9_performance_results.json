@@ -1,0 +1,19 @@
+{
+  "image": "dataset\\mixed\\info.png",
+  "runs": 1,
+  "average_seconds": 35.0182,
+  "minimum_seconds": 35.0182,
+  "maximum_seconds": 35.0182,
+  "detections": 9,
+  "risk_score": 100.0,
+  "risk_level": "CRITICAL",
+  "runs_detail": [
+    {
+      "run": 1,
+      "seconds": 35.0182,
+      "detections": 9,
+      "risk_score": 100.0,
+      "risk_level": "CRITICAL"
+    }
+  ]
+}

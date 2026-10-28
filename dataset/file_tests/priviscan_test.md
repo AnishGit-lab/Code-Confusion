@@ -1,0 +1,16 @@
+# PriviScan File Test
+
+## Personal Information
+
+- Name: Anish Kandel
+- Email: anish.kandel@example.com
+- Phone: +82 10-1234-5678
+- Address: 123 Example Street, Seoul
+- Student ID: 2024891090
+
+## Sensitive Credentials
+
+- Government ID: P123456789
+- Account Number: 123456789012
+- Password: MySecretPassword123
+- API Key: sk-test-123456789

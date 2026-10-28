@@ -1,0 +1,670 @@
+{
+  "dataset": "dataset",
+  "images_total": 40,
+  "images_labelled": 35,
+  "images_unlabelled": 5,
+  "metrics": {
+    "NAME": {
+      "tp": 2,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "EMAIL": {
+      "tp": 5,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "PHONE": {
+      "tp": 5,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "ADDRESS": {
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "ID": {
+      "tp": 5,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "GOVERNMENT_ID": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+    },
+    "ACCOUNT_NUMBER": {
+      "tp": 1,
+      "fp": 2,
+      "fn": 1,
+      "precision": 0.3333,
+      "recall": 0.5,
+      "f1": 0.4
+    },
+    "BANK_CARD": {
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "PASSWORD": {
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "API_KEY": {
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "SECRET": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+    },
+    "FACE": {
+      "tp": 4,
+      "fp": 0,
+      "fn": 4,
+      "precision": 1.0,
+      "recall": 0.5,
+      "f1": 0.6667
+    },
+    "QR": {
+      "tp": 4,
+      "fp": 0,
+      "fn": 4,
+      "precision": 1.0,
+      "recall": 0.5,
+      "f1": 0.6667
+    }
+  },
+  "micro_average": {
+    "precision": 0.9375,
+    "recall": 0.7692,
+    "f1": 0.8451
+  },
+  "macro_average": {
+    "precision": 0.9394,
+    "recall": 0.8636,
+    "f1": 0.8849
+  },
+  "confusion_matrix_single_label": {
+    "labels": [
+      "EMAIL",
+      "FACE",
+      "ID",
+      "MULTIPLE",
+      "NONE",
+      "PHONE",
+      "QR"
+    ],
+    "matrix": {
+      "EMAIL": {
+        "EMAIL": 4,
+        "FACE": 0,
+        "ID": 0,
+        "MULTIPLE": 0,
+        "NONE": 0,
+        "PHONE": 0,
+        "QR": 0
+      },
+      "FACE": {
+        "EMAIL": 0,
+        "FACE": 4,
+        "ID": 0,
+        "MULTIPLE": 0,
+        "NONE": 4,
+        "PHONE": 0,
+        "QR": 0
+      },
+      "ID": {
+        "EMAIL": 0,
+        "FACE": 0,
+        "ID": 3,
+        "MULTIPLE": 1,
+        "NONE": 0,
+        "PHONE": 0,
+        "QR": 0
+      },
+      "MULTIPLE": {
+        "EMAIL": 0,
+        "FACE": 0,
+        "ID": 0,
+        "MULTIPLE": 0,
+        "NONE": 0,
+        "PHONE": 0,
+        "QR": 0
+      },
+      "NONE": {
+        "EMAIL": 0,
+        "FACE": 0,
+        "ID": 0,
+        "MULTIPLE": 0,
+        "NONE": 0,
+        "PHONE": 0,
+        "QR": 0
+      },
+      "PHONE": {
+        "EMAIL": 0,
+        "FACE": 0,
+        "ID": 0,
+        "MULTIPLE": 1,
+        "NONE": 0,
+        "PHONE": 3,
+        "QR": 0
+      },
+      "QR": {
+        "EMAIL": 0,
+        "FACE": 0,
+        "ID": 0,
+        "MULTIPLE": 0,
+        "NONE": 4,
+        "PHONE": 0,
+        "QR": 4
+      }
+    }
+  },
+  "calibration": {
+    "ece": 0.0224,
+    "brier": 0.0241,
+    "samples": 455
+  },
+  "performance": {
+    "average_latency_seconds": 17.7441,
+    "median_latency_seconds": 15.9622,
+    "max_latency_seconds": 74.418
+  },
+  "images": [
+    {
+      "image": "email/email_01.png",
+      "label_source": "folder",
+      "expected": [
+        "EMAIL"
+      ],
+      "predicted": [
+        "EMAIL"
+      ],
+      "latency_seconds": 22.5145,
+      "error": null
+    },
+    {
+      "image": "email/email_02.png",
+      "label_source": "folder",
+      "expected": [
+        "EMAIL"
+      ],
+      "predicted": [
+        "EMAIL"
+      ],
+      "latency_seconds": 14.8535,
+      "error": null
+    },
+    {
+      "image": "email/email_03.png",
+      "label_source": "folder",
+      "expected": [
+        "EMAIL"
+      ],
+      "predicted": [
+        "EMAIL"
+      ],
+      "latency_seconds": 15.1031,
+      "error": null
+    },
+    {
+      "image": "email/email_04.png",
+      "label_source": "folder",
+      "expected": [
+        "EMAIL"
+      ],
+      "predicted": [
+        "EMAIL"
+      ],
+      "latency_seconds": 15.1368,
+      "error": null
+    },
+    {
+      "image": "face/face_01.png",
+      "label_source": "folder",
+      "expected": [
+        "FACE"
+      ],
+      "predicted": [],
+      "latency_seconds": 13.5783,
+      "error": null
+    },
+    {
+      "image": "face/face_02.png",
+      "label_source": "folder",
+      "expected": [
+        "FACE"
+      ],
+      "predicted": [],
+      "latency_seconds": 13.3538,
+      "error": null
+    },
+    {
+      "image": "face/face_03.png",
+      "label_source": "folder",
+      "expected": [
+        "FACE"
+      ],
+      "predicted": [],
+      "latency_seconds": 13.7074,
+      "error": null
+    },
+    {
+      "image": "face/face_04.png",
+      "label_source": "folder",
+      "expected": [
+        "FACE"
+      ],
+      "predicted": [],
+      "latency_seconds": 13.6477,
+      "error": null
+    },
+    {
+      "image": "mixed/info.png",
+      "label_source": "exact",
+      "expected": [
+        "ACCOUNT_NUMBER",
+        "ADDRESS",
+        "API_KEY",
+        "BANK_CARD",
+        "EMAIL",
+        "ID",
+        "NAME",
+        "PASSWORD",
+        "PHONE"
+      ],
+      "predicted": [
+        "ACCOUNT_NUMBER",
+        "ADDRESS",
+        "API_KEY",
+        "BANK_CARD",
+        "EMAIL",
+        "ID",
+        "NAME",
+        "PASSWORD",
+        "PHONE"
+      ],
+      "latency_seconds": 26.654,
+      "error": null
+    },
+    {
+      "image": "mixed/mixed_01.png",
+      "label_source": "unlabelled",
+      "expected": null,
+      "predicted": [
+        "EMAIL",
+        "PHONE"
+      ],
+      "latency_seconds": 16.8298,
+      "error": null
+    },
+    {
+      "image": "mixed/mixed_02.png",
+      "label_source": "unlabelled",
+      "expected": null,
+      "predicted": [
+        "EMAIL",
+        "ID"
+      ],
+      "latency_seconds": 17.896,
+      "error": null
+    },
+    {
+      "image": "mixed/mixed_03.png",
+      "label_source": "unlabelled",
+      "expected": null,
+      "predicted": [
+        "ID",
+        "PHONE"
+      ],
+      "latency_seconds": 15.979,
+      "error": null
+    },
+    {
+      "image": "mixed/mixed_04.png",
+      "label_source": "unlabelled",
+      "expected": null,
+      "predicted": [
+        "EMAIL",
+        "ID",
+        "PHONE"
+      ],
+      "latency_seconds": 17.9946,
+      "error": null
+    },
+    {
+      "image": "mixed/mixed_05.png",
+      "label_source": "unlabelled",
+      "expected": null,
+      "predicted": [
+        "EMAIL",
+        "ID",
+        "PHONE"
+      ],
+      "latency_seconds": 16.6295,
+      "error": null
+    },
+    {
+      "image": "mixed/scan.jpg",
+      "label_source": "exact",
+      "expected": [
+        "ACCOUNT_NUMBER",
+        "NAME"
+      ],
+      "predicted": [
+        "NAME"
+      ],
+      "latency_seconds": 74.418,
+      "error": null
+    },
+    {
+      "image": "phone/phone_01.png",
+      "label_source": "folder",
+      "expected": [
+        "PHONE"
+      ],
+      "predicted": [
+        "ACCOUNT_NUMBER",
+        "PHONE"
+      ],
+      "latency_seconds": 14.5,
+      "error": null
+    },
+    {
+      "image": "phone/phone_02.png",
+      "label_source": "folder",
+      "expected": [
+        "PHONE"
+      ],
+      "predicted": [
+        "PHONE"
+      ],
+      "latency_seconds": 15.2487,
+      "error": null
+    },
+    {
+      "image": "phone/phone_03.png",
+      "label_source": "folder",
+      "expected": [
+        "PHONE"
+      ],
+      "predicted": [
+        "PHONE"
+      ],
+      "latency_seconds": 15.8871,
+      "error": null
+    },
+    {
+      "image": "phone/phone_04.png",
+      "label_source": "folder",
+      "expected": [
+        "PHONE"
+      ],
+      "predicted": [
+        "PHONE"
+      ],
+      "latency_seconds": 16.8065,
+      "error": null
+    },
+    {
+      "image": "qr/qr_01.png",
+      "label_source": "folder",
+      "expected": [
+        "QR"
+      ],
+      "predicted": [],
+      "latency_seconds": 16.5032,
+      "error": null
+    },
+    {
+      "image": "qr/qr_02.png",
+      "label_source": "folder",
+      "expected": [
+        "QR"
+      ],
+      "predicted": [],
+      "latency_seconds": 15.9033,
+      "error": null
+    },
+    {
+      "image": "qr/qr_03.png",
+      "label_source": "folder",
+      "expected": [
+        "QR"
+      ],
+      "predicted": [],
+      "latency_seconds": 15.7954,
+      "error": null
+    },
+    {
+      "image": "qr/qr_04.png",
+      "label_source": "folder",
+      "expected": [
+        "QR"
+      ],
+      "predicted": [],
+      "latency_seconds": 16.2839,
+      "error": null
+    },
+    {
+      "image": "safe/safe_01.png",
+      "label_source": "folder",
+      "expected": [],
+      "predicted": [],
+      "latency_seconds": 16.2621,
+      "error": null
+    },
+    {
+      "image": "safe/safe_02.png",
+      "label_source": "folder",
+      "expected": [],
+      "predicted": [],
+      "latency_seconds": 15.8133,
+      "error": null
+    },
+    {
+      "image": "safe/safe_03.png",
+      "label_source": "folder",
+      "expected": [],
+      "predicted": [],
+      "latency_seconds": 15.7186,
+      "error": null
+    },
+    {
+      "image": "safe/safe_04.png",
+      "label_source": "folder",
+      "expected": [],
+      "predicted": [],
+      "latency_seconds": 15.9454,
+      "error": null
+    },
+    {
+      "image": "safe/safe_05.png",
+      "label_source": "folder",
+      "expected": [],
+      "predicted": [],
+      "latency_seconds": 16.4519,
+      "error": null
+    },
+    {
+      "image": "student_id/student_id_01.png",
+      "label_source": "folder",
+      "expected": [
+        "ID"
+      ],
+      "predicted": [
+        "ACCOUNT_NUMBER",
+        "ID"
+      ],
+      "latency_seconds": 16.3126,
+      "error": null
+    },
+    {
+      "image": "student_id/student_id_02.png",
+      "label_source": "folder",
+      "expected": [
+        "ID"
+      ],
+      "predicted": [
+        "ID"
+      ],
+      "latency_seconds": 15.7834,
+      "error": null
+    },
+    {
+      "image": "student_id/student_id_03.png",
+      "label_source": "folder",
+      "expected": [
+        "ID"
+      ],
+      "predicted": [
+        "ID"
+      ],
+      "latency_seconds": 15.3421,
+      "error": null
+    },
+    {
+      "image": "student_id/student_id_04.png",
+      "label_source": "folder",
+      "expected": [
+        "ID"
+      ],
+      "predicted": [
+        "ID"
+      ],
+      "latency_seconds": 15.6227,
+      "error": null
+    },
+    {
+      "image": "week7_vision/face_real_01.jpg",
+      "label_source": "generated",
+      "expected": [
+        "FACE"
+      ],
+      "predicted": [
+        "FACE"
+      ],
+      "latency_seconds": 17.2153,
+      "error": null
+    },
+    {
+      "image": "week7_vision/face_real_02.jpg",
+      "label_source": "generated",
+      "expected": [
+        "FACE"
+      ],
+      "predicted": [
+        "FACE"
+      ],
+      "latency_seconds": 17.298,
+      "error": null
+    },
+    {
+      "image": "week7_vision/face_real_03.jpg",
+      "label_source": "generated",
+      "expected": [
+        "FACE"
+      ],
+      "predicted": [
+        "FACE"
+      ],
+      "latency_seconds": 17.3498,
+      "error": null
+    },
+    {
+      "image": "week7_vision/face_real_04.jpg",
+      "label_source": "generated",
+      "expected": [
+        "FACE"
+      ],
+      "predicted": [
+        "FACE"
+      ],
+      "latency_seconds": 16.9917,
+      "error": null
+    },
+    {
+      "image": "week7_vision/qr_valid_01.png",
+      "label_source": "generated",
+      "expected": [
+        "QR"
+      ],
+      "predicted": [
+        "QR"
+      ],
+      "latency_seconds": 16.1355,
+      "error": null
+    },
+    {
+      "image": "week7_vision/qr_valid_02.png",
+      "label_source": "generated",
+      "expected": [
+        "QR"
+      ],
+      "predicted": [
+        "QR"
+      ],
+      "latency_seconds": 15.4079,
+      "error": null
+    },
+    {
+      "image": "week7_vision/qr_valid_03.png",
+      "label_source": "generated",
+      "expected": [
+        "QR"
+      ],
+      "predicted": [
+        "QR"
+      ],
+      "latency_seconds": 16.1503,
+      "error": null
+    },
+    {
+      "image": "week7_vision/qr_valid_04.png",
+      "label_source": "generated",
+      "expected": [
+        "QR"
+      ],
+      "predicted": [
+        "QR"
+      ],
+      "latency_seconds": 14.7383,
+      "error": null
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "name": "Anish Kandel",
+  "email": "anish.kandel@example.com",
+  "phone": "+82 10-1234-5678",
+  "address": "123 Example Street, Seoul",
+  "student_id": "2024891090",
+  "government_id": "P123456789",
+  "account_number": "123456789012",
+  "password": "MySecretPassword123",
+  "api_key": "sk-test-123456789"
+}

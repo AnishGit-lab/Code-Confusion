@@ -1,543 +1,601 @@
+from __future__ import annotations
+
 import re
+from typing import Any, Dict, Iterable, List, Optional
 
-import phonenumbers
-from phonenumbers import PhoneNumberMatcher
-
-from backend.risk.scoring import RISK_SCORES
+try:
+    import phonenumbers
+    from phonenumbers import PhoneNumberMatcher
+except ImportError:
+    phonenumbers = None
+    PhoneNumberMatcher = None
 
 
 # ============================================================
-# DETECTION PATTERNS
+# REGEX PATTERNS
 # ============================================================
 
-# ------------------------------------------------------------
-# EMAIL
-# ------------------------------------------------------------
-EMAIL_PATTERN = (
-    r'\b[A-Za-z0-9._%+-]+@'
-    r'[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b'
+EMAIL_RE = re.compile(
+    r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b",
+    re.IGNORECASE,
 )
 
-
-# ------------------------------------------------------------
-# PHONE
-# ------------------------------------------------------------
-# International examples:
-# +82 10 1234 5678
-# +1 202-555-0123
-# +44 20 7946 0958
-# +91 98765 43210
-#
-# Local labeled examples:
-# Phone: 010-7777-8888
-# Mobile: 020 1234 5678
-# Tel: 123-456-7890
-
-PHONE_LABEL_PATTERN = (
-    r'(?im)^\s*'
-    r'(?:phone|mobile|telephone|tel|contact\s*number)'
-    r'\s*[:\-]\s*'
-    r'([0-9+ ()\-.]{7,25})'
-    r'\s*$'
+DATE_RE = re.compile(
+    r"\b(?:"
+    r"\d{4}[-/.]\d{1,2}[-/.]\d{1,2}"
+    r"|"
+    r"\d{1,2}[-/.]\d{1,2}[-/.]\d{4}"
+    r"|"
+    r"\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}"
+    r")\b",
+    re.IGNORECASE,
 )
 
-
-# ------------------------------------------------------------
-# ID NUMBER
-# ------------------------------------------------------------
-# General identifier detection.
-#
-# Examples:
-# Student ID: STU-2026-A123
-# Staff ID: STAFF-7788
-# Employee Number: EMP-00125
-# Faculty ID: FAC-AB2048
-# Member ID: MBR-A1029
-
-ID_PATTERN = (
-    r'(?im)^\s*'
-    r'(?:student\s*(?:id|number)'
-    r'|staff\s*(?:id|number)'
-    r'|employee\s*(?:id|number)'
-    r'|faculty\s*(?:id|number)'
-    r'|member\s*(?:id|number)'
-    r'|user\s*(?:id|number)'
-    r'|registration\s*(?:id|number)'
-    r'|id\s*(?:number|no))'
-    r'\s*[:#-]?\s*'
-    r'([A-Za-z0-9][A-Za-z0-9._/-]{1,39})'
-    r'\s*$'
+PASSWORD_RE = re.compile(
+    r"(?i)\b(?:password|passwd|pwd|passcode)\s*[:=]\s*([^\s,;]+)"
 )
 
-
-# ------------------------------------------------------------
-# NAME
-# ------------------------------------------------------------
-NAME_PATTERN = (
-    r'(?im)^\s*'
-    r'(?:name|full\s*name|first\s*name|last\s*name)'
-    r'\s*[:\-]\s*'
-    r'([^\d\W_]+(?:[ \t]+[^\d\W_]+){0,3})'
-    r'\s*$'
+API_KEY_RE = re.compile(
+    r"(?i)\b(?:api[_ -]?key|api[_ -]?token|access[_ -]?token|secret[_ -]?key)"
+    r"\s*[:=]\s*([A-Za-z0-9_\-./+=]{8,})"
 )
 
-
-# ------------------------------------------------------------
-# DATE OF BIRTH
-# ------------------------------------------------------------
-DOB_PATTERN = (
-    r'(?im)^\s*'
-    r'(?:date\s*of\s*birth|dob|birth\s*date)'
-    r'\s*[:\-]\s*'
-    r'('
-    r'(?:\d{1,4}[\/\-.]\d{1,2}[\/\-.]\d{1,4})'
-    r'|'
-    r'(?:'
-    r'(?:January|February|March|April|May|June|July|August|'
-    r'September|October|November|December)'
-    r'\s+\d{1,2},?\s+\d{4}'
-    r')'
-    r'|'
-    r'(?:'
-    r'\d{1,2}\s+'
-    r'(?:January|February|March|April|May|June|July|August|'
-    r'September|October|November|December)'
-    r'\s+\d{4}'
-    r')'
-    r')'
-    r'\s*$'
+ACCOUNT_RE = re.compile(
+    r"(?i)\b(?:account|account[_ -]?number|bank[_ -]?account)"
+    r"\s*(?:number)?\s*[:#=-]?\s*(\d{6,30})\b"
 )
 
-
-# ------------------------------------------------------------
-# ADDRESS
-# ------------------------------------------------------------
-ADDRESS_PATTERN = (
-    r'(?im)^\s*'
-    r'(?:address|home\s*address|residential\s*address)'
-    r'\s*[:\-]\s*'
-    r'([^\r\n]{5,150})'
-    r'\s*$'
+GOV_ID_RE = re.compile(
+    r"(?i)\b(?:"
+    r"passport|passport[_ -]?no|passport[_ -]?number|"
+    r"national[_ -]?id|government[_ -]?id|"
+    r"government[_ -]?identification|"
+    r"driver'?s?\s*licen[cs]e|"
+    r"license[_ -]?number|"
+    r"resident[_ -]?card|"
+    r"social[_ -]?security|ssn"
+    r")\s*[:#=-]?\s*([A-Z0-9][A-Z0-9\-]{4,30})\b"
 )
 
-
-# ------------------------------------------------------------
-# GOVERNMENT ID
-# ------------------------------------------------------------
-GOVERNMENT_ID_PATTERN = (
-    r'(?im)^\s*'
-    r'(?:government\s*id'
-    r'|national\s*id'
-    r'|identity\s*number'
-    r'|passport\s*(?:number|no)'
-    r'|driving\s*license\s*(?:number|no)'
-    r'|driver\s*license\s*(?:number|no))'
-    r'\s*[:#-]?\s*'
-    r'([A-Za-z0-9][A-Za-z0-9./-]{2,39})'
-    r'\s*$'
+GENERAL_ID_RE = re.compile(
+    r"(?i)\b(?:"
+    r"student[_ -]?id|student[_ -]?number|"
+    r"staff[_ -]?id|staff[_ -]?number|"
+    r"employee[_ -]?id|employee[_ -]?number|"
+    r"faculty[_ -]?id|faculty[_ -]?number|"
+    r"member[_ -]?id|member[_ -]?number|"
+    r"registration[_ -]?number|registration[_ -]?id|"
+    r"identifier|id[_ -]?number|id"
+    r")\s*[:#=-]\s*([A-Z0-9][A-Z0-9\-]{3,30})\b"
 )
 
-
-# ------------------------------------------------------------
-# PASSWORD
-# ------------------------------------------------------------
-PASSWORD_PATTERN = (
-    r'(?im)^\s*'
-    r'(?:password|passcode|passwd)'
-    r'\s*[:=]\s*'
-    r'(\S+)'
-    r'\s*$'
+NAME_RE = re.compile(
+    r"(?i)^\s*(?:"
+    r"name|full\s+name|person\s+name|customer\s+name|"
+    r"student\s+name|employee\s+name|staff\s+name|"
+    r"faculty\s+name"
+    r")\s*:\s*([A-Za-zÀ-ÖØ-öø-ÿ'`.-]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ'`.-]+){1,4})\s*$"
 )
 
-
-# ------------------------------------------------------------
-# API KEY / SECRET
-# ------------------------------------------------------------
-API_KEY_PATTERN = (
-    r'(?im)^\s*'
-    r'(?:api\s*key|api\s*token|secret\s*key|access\s*token)'
-    r'\s*[:=]\s*'
-    r'([A-Za-z0-9_\-./+=]{8,})'
-    r'\s*$'
+ADDRESS_RE = re.compile(
+    r"(?i)^\s*(?:"
+    r"address|home\s+address|street\s+address|"
+    r"residential\s+address"
+    r")\s*:\s*(.+?)\s*$"
 )
 
+LABELED_PHONE_RE = re.compile(
+    r"(?i)^\s*(?:"
+    r"phone|phone\s+number|mobile|mobile\s+number|"
+    r"telephone|telephone\s+number|contact\s+number"
+    r")\s*:\s*(.+?)\s*$"
+)
 
-# ------------------------------------------------------------
-# BANK / ACCOUNT NUMBER
-# ------------------------------------------------------------
-BANK_ACCOUNT_PATTERN = (
-    r'(?im)^\s*'
-    r'(?:bank\s*account|account\s*number|account\s*no)'
-    r'\s*[:#-]?\s*'
-    r'([A-Za-z0-9][A-Za-z0-9 -]{3,33})'
-    r'\s*$'
+USERNAME_RE = re.compile(
+    r"(?i)^\s*(?:username|user\s+name)\s*:"
 )
 
 
 # ============================================================
-# HELPER FUNCTION
+# HELPERS
 # ============================================================
 
-def add_detection(
-    detections,
-    detection_type,
-    value
-):
-    detections.append({
+def _text(value: Any) -> str:
+    return "" if value is None else str(value)
+
+
+def _box_from_match(match: re.Match) -> List[int]:
+    return [match.start(), 0, match.end(), 1]
+
+
+def _make_detection(
+    detection_type: str,
+    value: str,
+    confidence: float = 0.95,
+    box: Optional[Any] = None,
+    source: str = "regex",
+) -> Dict[str, Any]:
+    return {
         "type": detection_type,
-        "value": value.strip(),
-        "risk": RISK_SCORES[detection_type]
-    })
+        "value": value,
+        "confidence": max(0.0, min(1.0, float(confidence))),
+        "box": box,
+        "source": source,
+    }
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def is_username_field(text: str) -> bool:
+    return bool(USERNAME_RE.match(_text(text)))
+
+
+def _iter_ocr(ocr_results: Iterable[Any]) -> Iterable[Dict[str, Any]]:
+    for item in ocr_results or []:
+        if isinstance(item, dict):
+            yield item
 
 
 # ============================================================
-# MAIN DETECTION FUNCTION
+# DETECTORS
 # ============================================================
 
-def detect_sensitive_information(text):
+def detect_emails(text: str, box: Any = None) -> List[Dict[str, Any]]:
+    results = []
 
-    detections = []
-
-
-    # ========================================================
-    # EMAIL
-    # ========================================================
-
-    emails = re.findall(
-        EMAIL_PATTERN,
-        text
-    )
-
-    for email in emails:
-
-        add_detection(
-            detections,
-            "EMAIL",
-            email
+    for match in EMAIL_RE.finditer(text):
+        results.append(
+            _make_detection(
+                "EMAIL",
+                match.group(0),
+                0.99,
+                box if box is not None else _box_from_match(match),
+            )
         )
 
-
-    # ========================================================
-    # PHONE
-    # ========================================================
-
-    phone_values = []
+    return results
 
 
-    # ----------------------------------------
-    # International / recognizable numbers
-    # ----------------------------------------
+def detect_international_phones(
+    text: str,
+    box: Any = None,
+) -> List[Dict[str, Any]]:
+    results = []
+
+    if phonenumbers is None or PhoneNumberMatcher is None:
+        return results
 
     try:
+        matcher = PhoneNumberMatcher(text, None)
 
-        for match in PhoneNumberMatcher(
-            text,
-            None
-        ):
+        for match in matcher:
+            raw = match.raw_string
 
-            phone_number = match.number
+            try:
+                number = phonenumbers.parse(raw, None)
 
-            if phonenumbers.is_possible_number(
-                phone_number
-            ):
-
-                phone_values.append(
-                    match.raw_string.strip()
-                )
+                if phonenumbers.is_possible_number(number):
+                    if phonenumbers.is_valid_number(number):
+                        results.append(
+                            _make_detection(
+                                "PHONE",
+                                raw,
+                                0.98,
+                                box if box is not None else [
+                                    match.start,
+                                    0,
+                                    match.end,
+                                    1,
+                                ],
+                            )
+                        )
+            except Exception:
+                continue
 
     except Exception:
-
         pass
 
-
-    # ----------------------------------------
-    # Labeled local numbers
-    # ----------------------------------------
-
-    labeled_phones = re.findall(
-        PHONE_LABEL_PATTERN,
-        text
-    )
-
-    for phone in labeled_phones:
-
-        phone = phone.strip()
-
-        digits_only = re.sub(
-            r'\D',
-            '',
-            phone
-        )
-
-        if len(digits_only) >= 7:
-
-            phone_values.append(
-                phone
-            )
+    return results
 
 
-    # ----------------------------------------
-    # Remove duplicate phone numbers
-    # ----------------------------------------
+def detect_labeled_phone(text: str, box: Any = None) -> List[Dict[str, Any]]:
+    match = LABELED_PHONE_RE.match(text)
 
-    seen_phones = set()
+    if not match:
+        return []
 
-    for phone in phone_values:
+    value = match.group(1).strip()
 
-        normalized = re.sub(
-            r'\D',
-            '',
-            phone
-        )
+    if len(re.sub(r"\D", "", value)) < 7:
+        return []
 
-        if normalized in seen_phones:
-            continue
-
-        seen_phones.add(normalized)
-
-        add_detection(
-            detections,
+    return [
+        _make_detection(
             "PHONE",
-            phone
+            value,
+            0.96,
+            box if box is not None else _box_from_match(match),
         )
+    ]
 
 
-    # ========================================================
-    # ID NUMBER
-    # ========================================================
+def detect_name(text: str, box: Any = None) -> List[Dict[str, Any]]:
+    if is_username_field(text):
+        return []
 
-    id_matches = re.findall(
-        ID_PATTERN,
-        text
-    )
+    match = NAME_RE.match(text)
 
-    for identifier in id_matches:
+    if not match:
+        return []
 
-        add_detection(
-            detections,
-            "ID_NUMBER",
-            identifier
-        )
+    value = match.group(1).strip()
 
-
-    # ========================================================
-    # NAME
-    # ========================================================
-
-    names = re.findall(
-        NAME_PATTERN,
-        text
-    )
-
-    for name in names:
-
-        add_detection(
-            detections,
+    return [
+        _make_detection(
             "NAME",
-            name
+            value,
+            0.96,
+            box if box is not None else _box_from_match(match),
+        )
+    ]
+
+
+def detect_date_of_birth(text: str, box: Any = None) -> List[Dict[str, Any]]:
+    lowered = text.lower()
+
+    if not any(
+        keyword in lowered
+        for keyword in (
+            "dob",
+            "date of birth",
+            "birth date",
+            "born",
+        )
+    ):
+        return []
+
+    results = []
+
+    for match in DATE_RE.finditer(text):
+        results.append(
+            _make_detection(
+                "DATE_OF_BIRTH",
+                match.group(0),
+                0.96,
+                box if box is not None else _box_from_match(match),
+            )
         )
 
-
-    # ========================================================
-    # DATE OF BIRTH
-    # ========================================================
-
-    dates_of_birth = re.findall(
-        DOB_PATTERN,
-        text
-    )
-
-    for date_of_birth in dates_of_birth:
-
-        add_detection(
-            detections,
-            "DATE_OF_BIRTH",
-            date_of_birth
-        )
+    return results
 
 
-    # ========================================================
-    # ADDRESS
-    # ========================================================
+def detect_address(text: str, box: Any = None) -> List[Dict[str, Any]]:
+    match = ADDRESS_RE.match(text)
 
-    addresses = re.findall(
-        ADDRESS_PATTERN,
-        text
-    )
+    if not match:
+        return []
 
-    for address in addresses:
+    value = match.group(1).strip()
 
-        add_detection(
-            detections,
+    if len(value) < 5:
+        return []
+
+    return [
+        _make_detection(
             "ADDRESS",
-            address
+            value,
+            0.94,
+            box if box is not None else _box_from_match(match),
+        )
+    ]
+
+
+def detect_id_number(text: str, box: Any = None) -> List[Dict[str, Any]]:
+    results = []
+
+    match = GENERAL_ID_RE.search(text)
+
+    if match:
+        results.append(
+            _make_detection(
+                "ID",
+                match.group(1),
+                0.97,
+                box if box is not None else _box_from_match(match),
+            )
         )
 
+    return results
 
-    # ========================================================
-    # GOVERNMENT ID
-    # ========================================================
 
-    government_ids = re.findall(
-        GOVERNMENT_ID_PATTERN,
-        text
+def detect_government_id(text: str, box: Any = None) -> List[Dict[str, Any]]:
+    results = []
+
+    match = GOV_ID_RE.search(text)
+
+    if match:
+        results.append(
+            _make_detection(
+                "GOVERNMENT_ID",
+                match.group(1),
+                0.98,
+                box if box is not None else _box_from_match(match),
+            )
+        )
+
+    return results
+
+
+def detect_password(text: str, box: Any = None) -> List[Dict[str, Any]]:
+    results = []
+
+    match = PASSWORD_RE.search(text)
+
+    if match:
+        results.append(
+            _make_detection(
+                "PASSWORD",
+                match.group(1),
+                0.99,
+                box if box is not None else _box_from_match(match),
+            )
+        )
+
+    return results
+
+
+def detect_api_key(text: str, box: Any = None) -> List[Dict[str, Any]]:
+    results = []
+
+    match = API_KEY_RE.search(text)
+
+    if match:
+        results.append(
+            _make_detection(
+                "API_KEY",
+                match.group(1),
+                0.99,
+                box if box is not None else _box_from_match(match),
+            )
+        )
+
+    return results
+
+
+def detect_bank_account(text: str, box: Any = None) -> List[Dict[str, Any]]:
+    results = []
+
+    match = ACCOUNT_RE.search(text)
+
+    if match:
+        results.append(
+            _make_detection(
+                "ACCOUNT_NUMBER",
+                match.group(1),
+                0.97,
+                box if box is not None else _box_from_match(match),
+            )
+        )
+
+    return results
+
+
+# ============================================================
+# TEXT DETECTION
+# ============================================================
+
+def detect_text(
+    text: str,
+    box: Any = None,
+) -> List[Dict[str, Any]]:
+    text = _text(text)
+
+    if not text.strip():
+        return []
+
+    detections: List[Dict[str, Any]] = []
+
+    detectors = (
+        detect_emails,
+        detect_international_phones,
+        detect_labeled_phone,
+        detect_name,
+        detect_date_of_birth,
+        detect_address,
+        detect_government_id,
+        detect_id_number,
+        detect_password,
+        detect_api_key,
+        detect_bank_account,
     )
 
-    for government_id in government_ids:
-
-        add_detection(
-            detections,
-            "GOVERNMENT_ID",
-            government_id
-        )
-
-
-    # ========================================================
-    # PASSWORD
-    # ========================================================
-
-    passwords = re.findall(
-        PASSWORD_PATTERN,
-        text
-    )
-
-    for password in passwords:
-
-        add_detection(
-            detections,
-            "PASSWORD",
-            password
-        )
-
-
-    # ========================================================
-    # API KEY
-    # ========================================================
-
-    api_keys = re.findall(
-        API_KEY_PATTERN,
-        text
-    )
-
-    for api_key in api_keys:
-
-        add_detection(
-            detections,
-            "API_KEY",
-            api_key
-        )
-
-
-    # ========================================================
-    # BANK / ACCOUNT NUMBER
-    # ========================================================
-
-    bank_accounts = re.findall(
-        BANK_ACCOUNT_PATTERN,
-        text
-    )
-
-    for account in bank_accounts:
-
-        add_detection(
-            detections,
-            "BANK_ACCOUNT",
-            account
-        )
-
+    for detector in detectors:
+        try:
+            detections.extend(detector(text, box))
+        except Exception:
+            continue
 
     return detections
 
 
 # ============================================================
-# TEST
+# NORMALIZATION
+# ============================================================
+
+def normalize_detections(
+    detections: Iterable[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    normalized = []
+
+    for item in detections or []:
+        if not isinstance(item, dict):
+            continue
+
+        detection_type = (
+            item.get("type")
+            or item.get("label")
+            or item.get("category")
+            or ""
+        )
+
+        value = (
+            item.get("value")
+            or item.get("text")
+            or item.get("entity")
+            or ""
+        )
+
+        detection_type = str(detection_type).upper().strip()
+        value = str(value).strip()
+
+        if not detection_type or not value:
+            continue
+
+        confidence = _safe_float(
+            item.get("confidence", item.get("score", 0.9)),
+            0.9,
+        )
+
+        box = item.get("box", item.get("bbox"))
+
+        normalized.append(
+            {
+                **item,
+                "type": detection_type,
+                "value": value,
+                "confidence": max(0.0, min(1.0, confidence)),
+                "box": box,
+            }
+        )
+
+    return normalized
+
+
+# ============================================================
+# DEDUPLICATION
+# ============================================================
+
+def _dedup_key(item: Dict[str, Any]) -> tuple:
+    return (
+        str(item.get("type", "")).upper(),
+        str(item.get("value", "")).strip().lower(),
+    )
+
+
+def deduplicate_detections(
+    detections: Iterable[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    output: Dict[tuple, Dict[str, Any]] = {}
+
+    for item in normalize_detections(detections):
+        key = _dedup_key(item)
+
+        if key not in output:
+            output[key] = item
+            continue
+
+        old = output[key]
+
+        if float(item.get("confidence", 0)) > float(
+            old.get("confidence", 0)
+        ):
+            output[key] = item
+
+    return list(output.values())
+
+
+# ============================================================
+# OCR DETECTION
+# ============================================================
+
+def detect_from_ocr_results(
+    ocr_results: Iterable[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    detections = []
+
+    for item in _iter_ocr(ocr_results):
+        text = item.get("text", "")
+        confidence = _safe_float(item.get("confidence", 0.9), 0.9)
+        box = item.get("box", item.get("bbox"))
+
+        for detection in detect_text(text, box):
+            detection["confidence"] = min(
+                float(detection.get("confidence", 0.9)),
+                max(0.0, confidence),
+            )
+            detection["source"] = "ocr_regex"
+            detections.append(detection)
+
+    return deduplicate_detections(detections)
+
+
+# ============================================================
+# MAIN DETECTOR
+# ============================================================
+
+def detect_sensitive(
+    text: Optional[str] = None,
+    ocr_results: Optional[Iterable[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    detections = []
+
+    if text:
+        detections.extend(detect_text(text))
+
+    if ocr_results:
+        detections.extend(
+            detect_from_ocr_results(ocr_results)
+        )
+
+    return deduplicate_detections(detections)
+
+
+# ============================================================
+# COMPATIBILITY ALIASES
+# ============================================================
+
+detect_sensitive_data = detect_sensitive
+detect_sensitive_text = detect_text
+
+
+def score_detections(detections):
+    from backend.risk.scoring import score_detections as _score
+
+    return _score(detections)
+
+
+def analyze_sensitive_data(
+    text: Optional[str] = None,
+    ocr_results: Optional[Iterable[Dict[str, Any]]] = None,
+):
+    detections = detect_sensitive(
+        text=text,
+        ocr_results=ocr_results,
+    )
+
+    return score_detections(detections)
+
+
+# ============================================================
+# CLI TEST
 # ============================================================
 
 if __name__ == "__main__":
+    sample = """
+    Name: Anish Kandel
+    Email: anish@example.com
+    Phone: +82 10-1234-5678
+    Student ID: 2024891090
+    Password: MySecretPassword123
+    API Key: sk-test-123456789
+    """
 
-    test_text = """
-Name: Anish Kandel
+    results = detect_sensitive(text=sample)
 
-Email: test@example.com
-
-Phone: +82 10 1234 5678
-Phone: +1 202-555-0123
-Phone: +44 20 7946 0958
-Phone: +91 98765 43210
-Phone: +81 90 1234 5678
-Phone: 010-7777-8888
-
-Student ID: STU-2026-A123
-Staff ID: STAFF-7788
-Employee Number: EMP-00125
-Faculty ID: FAC-AB2048
-Member ID: MBR-A1029
-
-Date of Birth: 2001-01-15
-
-Address: 123 Main Street, London
-
-Government ID: GOV-AB12345
-
-Password: TestPassword123!
-
-API Key: sk_test_123456789
-
-Bank Account: 123456789012
-"""
-
-
-    results = detect_sensitive_information(
-        test_text
-    )
-
-
-    print(
-        "\n========== PRIVISCAN DETECTION ==========\n"
-    )
-
-
-    for result in results:
-
-        print(
-            "Type:",
-            result["type"]
-        )
-
-        print(
-            "Value:",
-            result["value"]
-        )
-
-        print(
-            "Risk Score:",
-            result["risk"]
-        )
-
-        print("--------------------------------")
-
-
-    print(
-        "\nTotal Detections:",
-        len(results)
-    )
-
-
-    if results:
-
-        total_risk = sum(
-            result["risk"]
-            for result in results
-        )
-
-        average_risk = (
-            total_risk / len(results)
-        )
-
-        print(
-            "Average Risk Score:",
-            round(
-                average_risk,
-                2
-            )
-        )
+    for item in results:
+        print(item)

@@ -1,0 +1,246 @@
+{
+  "project": "PriviScan",
+  "evaluation": "Week 9 Final Evaluation",
+  "summary": {
+    "total_tests": 6,
+    "passed": 6,
+    "failed": 0,
+    "pass_rate_percent": 100.0,
+    "average_processing_seconds": 15.2056
+  },
+  "tests": [
+    {
+      "file": "01_safe.png",
+      "description": "Safe image without sensitive information",
+      "status": "PASS",
+      "processing_seconds": 25.3452,
+      "detections": 0,
+      "detected_types": [],
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "checks": [
+        {
+          "check": "risk_score_range",
+          "passed": true,
+          "details": "Risk score = 0.0"
+        },
+        {
+          "check": "valid_risk_level",
+          "passed": true,
+          "details": "Risk level = LOW"
+        },
+        {
+          "check": "required_detection_types",
+          "passed": true,
+          "details": "All required types detected"
+        },
+        {
+          "check": "forbidden_detection_types",
+          "passed": true,
+          "details": "No forbidden critical types detected"
+        },
+        {
+          "check": "expected_risk_level",
+          "passed": true,
+          "details": "Expected LOW, got LOW"
+        }
+      ]
+    },
+    {
+      "file": "02_basic_pii.png",
+      "description": "Basic personal information",
+      "status": "PASS",
+      "processing_seconds": 11.8811,
+      "detections": 4,
+      "detected_types": [
+        "NAME",
+        "EMAIL",
+        "PHONE",
+        "ADDRESS"
+      ],
+      "risk_score": 100.0,
+      "risk_level": "CRITICAL",
+      "checks": [
+        {
+          "check": "risk_score_range",
+          "passed": true,
+          "details": "Risk score = 100.0"
+        },
+        {
+          "check": "valid_risk_level",
+          "passed": true,
+          "details": "Risk level = CRITICAL"
+        },
+        {
+          "check": "required_detection_types",
+          "passed": true,
+          "details": "All required types detected"
+        },
+        {
+          "check": "forbidden_detection_types",
+          "passed": true,
+          "details": "No forbidden critical types detected"
+        }
+      ]
+    },
+    {
+      "file": "03_identity.png",
+      "description": "Identity information",
+      "status": "PASS",
+      "processing_seconds": 10.8467,
+      "detections": 3,
+      "detected_types": [
+        "ID",
+        "ID",
+        "NAME"
+      ],
+      "risk_score": 96.18,
+      "risk_level": "CRITICAL",
+      "checks": [
+        {
+          "check": "risk_score_range",
+          "passed": true,
+          "details": "Risk score = 96.18"
+        },
+        {
+          "check": "valid_risk_level",
+          "passed": true,
+          "details": "Risk level = CRITICAL"
+        },
+        {
+          "check": "required_detection_types",
+          "passed": true,
+          "details": "All required types detected"
+        },
+        {
+          "check": "forbidden_detection_types",
+          "passed": true,
+          "details": "No forbidden critical types detected"
+        }
+      ]
+    },
+    {
+      "file": "04_financial.png",
+      "description": "Financial information",
+      "status": "PASS",
+      "processing_seconds": 11.6175,
+      "detections": 3,
+      "detected_types": [
+        "NAME",
+        "ACCOUNT_NUMBER",
+        "BANK_CARD"
+      ],
+      "risk_score": 100.0,
+      "risk_level": "CRITICAL",
+      "checks": [
+        {
+          "check": "risk_score_range",
+          "passed": true,
+          "details": "Risk score = 100.0"
+        },
+        {
+          "check": "valid_risk_level",
+          "passed": true,
+          "details": "Risk level = CRITICAL"
+        },
+        {
+          "check": "required_detection_types",
+          "passed": true,
+          "details": "All required types detected"
+        },
+        {
+          "check": "forbidden_detection_types",
+          "passed": true,
+          "details": "No forbidden critical types detected"
+        }
+      ]
+    },
+    {
+      "file": "05_credentials.png",
+      "description": "Password and API key",
+      "status": "PASS",
+      "processing_seconds": 11.2122,
+      "detections": 2,
+      "detected_types": [
+        "PASSWORD",
+        "API_KEY"
+      ],
+      "risk_score": 100.0,
+      "risk_level": "CRITICAL",
+      "checks": [
+        {
+          "check": "risk_score_range",
+          "passed": true,
+          "details": "Risk score = 100.0"
+        },
+        {
+          "check": "valid_risk_level",
+          "passed": true,
+          "details": "Risk level = CRITICAL"
+        },
+        {
+          "check": "required_detection_types",
+          "passed": true,
+          "details": "All required types detected"
+        },
+        {
+          "check": "forbidden_detection_types",
+          "passed": true,
+          "details": "No forbidden critical types detected"
+        },
+        {
+          "check": "expected_risk_level",
+          "passed": true,
+          "details": "Expected CRITICAL, got CRITICAL"
+        }
+      ]
+    },
+    {
+      "file": "06_mixed_critical.png",
+      "description": "Mixed personal, financial and credential information",
+      "status": "PASS",
+      "processing_seconds": 20.3309,
+      "detections": 9,
+      "detected_types": [
+        "NAME",
+        "EMAIL",
+        "PHONE",
+        "ADDRESS",
+        "ID",
+        "ACCOUNT_NUMBER",
+        "BANK_CARD",
+        "PASSWORD",
+        "API_KEY"
+      ],
+      "risk_score": 100.0,
+      "risk_level": "CRITICAL",
+      "checks": [
+        {
+          "check": "risk_score_range",
+          "passed": true,
+          "details": "Risk score = 100.0"
+        },
+        {
+          "check": "valid_risk_level",
+          "passed": true,
+          "details": "Risk level = CRITICAL"
+        },
+        {
+          "check": "required_detection_types",
+          "passed": true,
+          "details": "All required types detected"
+        },
+        {
+          "check": "forbidden_detection_types",
+          "passed": true,
+          "details": "No forbidden critical types detected"
+        },
+        {
+          "check": "expected_risk_level",
+          "passed": true,
+          "details": "Expected CRITICAL, got CRITICAL"
+        }
+      ]
+    }
+  ]
+}
