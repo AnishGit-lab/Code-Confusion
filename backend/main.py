@@ -129,7 +129,6 @@ footer{padding:35px 0 45px;color:var(--muted);font-size:12px;text-align:center}
  <p class="muted small">These are the project’s intended context areas. Important implementation note: the current <code>scoring.py</code> explicitly states that sector/context classification is not used in its present risk formula. Do not describe sector-based score adjustment as already implemented until that module is updated.</p>
  <h3 style="margin:22px 0 10px">Research references and algorithm source</h3>
  <p class="muted">The uploaded repository contains the scoring implementation and its design explanation, but it does not include bibliographic references, DOI links, or source URLs for the algorithm. To avoid inventing citations, this page identifies the current algorithm as the PriviScan implementation and does not claim that its exact numerical weights come from a specific paper.</p>
- <div class="about-card"><h3>Implementation source</h3><p><code>backend/risk/scoring.py</code> — factor definitions, likelihood calculation, linkability adjustment, individual risk normalization, aggregation, and credential override.</p></div>
 </section>
 </main>
 <footer><div class="wrap">PriviScan · Privacy risk assessment and user-controlled protection</div></footer>
