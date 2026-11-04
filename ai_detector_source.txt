@@ -1,0 +1,800 @@
+
+from pathlib import Path
+from difflib import SequenceMatcher
+import re
+from threading import Lock
+
+from backend.ocr.detector import extract_text
+
+
+MODEL_NAME = "urchade/gliner_small-v2.1"
+
+# Load GLiNER only once per Python process.
+_GLINER_MODEL = None
+_GLINER_LOAD_LOCK = Lock()
+
+
+SUPPORTED_TYPES = {
+    "NAME",
+    "EMAIL",
+    "PHONE",
+    "ADDRESS",
+    "ID",
+    "GOVERNMENT_ID",
+    "ACCOUNT_NUMBER",
+    "BANK_CARD",
+    "PASSWORD",
+    "API_KEY",
+    "SECRET",
+}
+
+
+AI_LABELS = [
+    "person name",
+    "email address",
+    "phone number",
+    "physical address",
+    "identification number",
+    "government identification number",
+    "account number",
+    "bank card number",
+    "password",
+    "API key",
+    "secret",
+]
+
+
+LABEL_MAPPING = {
+    "person name": "NAME",
+    "name": "NAME",
+    "email address": "EMAIL",
+    "email": "EMAIL",
+    "phone number": "PHONE",
+    "phone": "PHONE",
+    "telephone number": "PHONE",
+    "physical address": "ADDRESS",
+    "address": "ADDRESS",
+    "identification number": "ID",
+    "id number": "ID",
+    "identification": "ID",
+    "government identification number": "GOVERNMENT_ID",
+    "government id": "GOVERNMENT_ID",
+    "government identification": "GOVERNMENT_ID",
+    "account number": "ACCOUNT_NUMBER",
+    "account": "ACCOUNT_NUMBER",
+    "bank card number": "BANK_CARD",
+    "bank card": "BANK_CARD",
+    "card number": "BANK_CARD",
+    "password": "PASSWORD",
+    "api key": "API_KEY",
+    "api_key": "API_KEY",
+    "api token": "API_KEY",
+    "secret": "SECRET",
+    "secret key": "SECRET",
+}
+
+
+FIELD_LABELS = {
+    "NAME": [
+        "name",
+        "full name",
+        "person name",
+        "customer name",
+        "student name",
+        "employee name",
+    ],
+    "EMAIL": [
+        "email",
+        "email address",
+        "e-mail",
+    ],
+    "PHONE": [
+        "phone",
+        "phone number",
+        "mobile",
+        "mobile number",
+        "telephone",
+        "telephone number",
+        "contact number",
+    ],
+    "ADDRESS": [
+        "address",
+        "home address",
+        "street address",
+        "residential address",
+        "location",
+    ],
+    "ID": [
+        "id",
+        "id number",
+        "identification number",
+        "student id",
+        "student number",
+        "employee id",
+        "employee number",
+        "staff id",
+        "staff number",
+        "faculty id",
+        "faculty number",
+        "member id",
+        "member number",
+        "membership id",
+        "membership number",
+    ],
+    "GOVERNMENT_ID": [
+        "government id",
+        "government identification",
+        "government identification number",
+        "passport",
+        "passport number",
+        "driver license",
+        "driver license number",
+        "driving license",
+        "resident card",
+        "resident card number",
+    ],
+    "ACCOUNT_NUMBER": [
+        "account",
+        "account number",
+        "account information",
+        "bank account",
+        "bank account number",
+    ],
+    "BANK_CARD": [
+        "card",
+        "card number",
+        "bank card",
+        "bank card number",
+        "credit card",
+        "credit card number",
+        "debit card",
+        "debit card number",
+    ],
+    "PASSWORD": [
+        "password",
+        "passcode",
+        "pass code",
+        "login password",
+    ],
+    "API_KEY": [
+        "api key",
+        "api token",
+        "access token",
+        "authentication token",
+        "auth token",
+        "secret key",
+    ],
+    "SECRET": [
+        "secret",
+        "secret value",
+        "secret key",
+        "private key",
+        "credential",
+    ],
+}
+
+
+EMAIL_PATTERN = re.compile(
+    r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
+)
+
+
+# These are field labels, not personal-name values.
+NAME_FIELD_LABELS = {
+    "name",
+    "full name",
+    "person name",
+    "customer name",
+    "student name",
+    "employee name",
+    "username",
+    "user name",
+    "user",
+    "email",
+    "email address",
+    "phone",
+    "phone number",
+    "mobile",
+    "mobile number",
+    "telephone",
+    "telephone number",
+    "address",
+    "id",
+    "id number",
+    "student id",
+    "employee id",
+    "account",
+    "account number",
+    "bank card",
+    "bank card number",
+    "card number",
+    "government id",
+    "password",
+    "passcode",
+    "api key",
+    "api token",
+    "secret",
+    "secret key",
+}
+
+
+def normalize_text(value):
+    if value is None:
+        return ""
+
+    value = str(value).strip().lower()
+    value = re.sub(r"\s+", " ", value)
+
+    return value
+
+
+def normalize_label(value):
+    value = normalize_text(value)
+
+    value = re.sub(
+        r"[^a-z0-9 ]",
+        "",
+        value,
+    )
+
+    return value
+
+
+def is_username_field(text):
+    """
+    Identify OCR rows whose value is labeled as a username.
+
+    Examples:
+        Username: anish
+        User name: anish
+    """
+    if not text:
+        return False
+
+    return bool(
+        re.match(
+            r"^\s*(?:username|user\s+name)\s*:",
+            str(text),
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def is_valid_email(value):
+    if not value:
+        return False
+
+    return bool(EMAIL_PATTERN.search(value))
+
+
+def is_numeric_identifier(value):
+    if not value:
+        return False
+
+    digits = re.sub(r"\D", "", value)
+
+    return len(digits) >= 5
+
+
+def is_probable_bank_card(value):
+    if not value:
+        return False
+
+    digits = re.sub(r"\D", "", value)
+
+    return 13 <= len(digits) <= 19
+
+
+def is_probable_api_key(value):
+    if not value:
+        return False
+
+    value_lower = value.lower()
+
+    prefixes = (
+        "sk-",
+        "pk-",
+        "api-",
+        "key-",
+        "token-",
+        "ghp_",
+        "github_pat_",
+        "xoxb-",
+        "xoxp-",
+        "bearer ",
+    )
+
+    return value_lower.startswith(prefixes)
+
+
+def detect_field_type(label):
+    normalized = normalize_label(label)
+
+    if not normalized:
+        return None
+
+    best_type = None
+    best_score = 0.0
+
+    for sensitive_type, possible_labels in FIELD_LABELS.items():
+        for possible_label in possible_labels:
+            candidate = normalize_label(possible_label)
+
+            score = SequenceMatcher(
+                None,
+                normalized,
+                candidate,
+            ).ratio()
+
+            if score > best_score:
+                best_score = score
+                best_type = sensitive_type
+
+    if best_score >= 0.78:
+        return best_type
+
+    return None
+
+
+def split_field_value(text):
+    if not text or ":" not in text:
+        return None, None
+
+    label, value = text.split(":", 1)
+
+    label = label.strip()
+    value = value.strip()
+
+    if not label or not value:
+        return None, None
+
+    return label, value
+
+
+def detect_labeled_values(ocr_results):
+    detections = []
+
+    for item in ocr_results:
+        text = str(item.get("text", "")).strip()
+        confidence = float(item.get("confidence", 0.0))
+        box = item.get("box")
+
+        label, value = split_field_value(text)
+
+        if not label or not value:
+            continue
+
+        sensitive_type = detect_field_type(label)
+
+        if not sensitive_type:
+            continue
+
+        if sensitive_type == "EMAIL":
+            if not is_valid_email(value):
+                continue
+
+        elif sensitive_type == "PHONE":
+            digits = re.sub(r"\D", "", value)
+            if len(digits) < 7:
+                continue
+
+        elif sensitive_type == "ID":
+            if not is_numeric_identifier(value):
+                continue
+
+        elif sensitive_type == "GOVERNMENT_ID":
+            if len(value) < 4:
+                continue
+
+        elif sensitive_type == "ACCOUNT_NUMBER":
+            if not is_numeric_identifier(value):
+                continue
+
+        elif sensitive_type == "BANK_CARD":
+            if not is_probable_bank_card(value):
+                continue
+
+        elif sensitive_type in {"PASSWORD", "API_KEY", "SECRET"}:
+            if len(value) < 4:
+                continue
+
+        elif sensitive_type == "NAME":
+            if len(value) < 2:
+                continue
+
+        elif sensitive_type == "ADDRESS":
+            if len(value) < 4:
+                continue
+
+        detection_confidence = max(
+            0.85,
+            min(0.99, confidence),
+        )
+
+        detections.append({
+            "type": sensitive_type,
+            "value": value,
+            "confidence": round(detection_confidence, 4),
+            "box": box,
+            "source": "field_label",
+        })
+
+    return detections
+
+
+def detect_account_from_context(ocr_results):
+    detections = []
+
+    for index, item in enumerate(ocr_results):
+        text = str(item.get("text", "")).strip()
+
+        if not text:
+            continue
+
+        label_type = detect_field_type(text)
+
+        if label_type != "ACCOUNT_NUMBER":
+            continue
+
+        if index + 1 >= len(ocr_results):
+            continue
+
+        next_item = ocr_results[index + 1]
+        value = str(next_item.get("text", "")).strip()
+
+        if not is_numeric_identifier(value):
+            continue
+
+        detections.append({
+            "type": "ACCOUNT_NUMBER",
+            "value": value,
+            "confidence": 0.98,
+            "box": next_item.get("box"),
+            "source": "account_context",
+        })
+
+    return detections
+
+
+def get_gliner_model():
+    """Load GLiNER once and reuse it across image evaluations."""
+    global _GLINER_MODEL
+
+    if _GLINER_MODEL is not None:
+        return _GLINER_MODEL
+
+    try:
+        from gliner import GLiNER
+    except ImportError:
+        print("WARNING: GLiNER is not installed.")
+        return None
+
+    with _GLINER_LOAD_LOCK:
+        if _GLINER_MODEL is not None:
+            return _GLINER_MODEL
+
+        try:
+            print(f"Loading GLiNER model: {MODEL_NAME}")
+
+            _GLINER_MODEL = GLiNER.from_pretrained(MODEL_NAME)
+
+            print("GLiNER model loaded successfully.")
+
+        except Exception as exc:
+            print(f"WARNING: Could not load GLiNER model: {exc}")
+            _GLINER_MODEL = None
+
+    return _GLINER_MODEL
+
+
+def detect_with_gliner(ocr_results):
+    detections = []
+
+    model = get_gliner_model()
+
+    if model is None:
+        return detections
+
+    for item in ocr_results:
+        text = str(item.get("text", "")).strip()
+
+        if not text:
+            continue
+
+        ocr_confidence = float(item.get("confidence", 0.0))
+        box = item.get("box")
+
+        # Remember the field context for this complete OCR row.
+        username_field = is_username_field(text)
+
+        field_type = None
+
+        if ":" in text:
+            field_label = text.split(":", 1)[0].strip()
+            field_type = detect_field_type(field_label)
+
+        try:
+            entities = model.predict_entities(
+                text,
+                AI_LABELS,
+                threshold=0.55,
+            )
+        except Exception as exc:
+            print(
+                "WARNING: GLiNER prediction "
+                f"failed for '{text}': {exc}"
+            )
+            continue
+
+        for entity in entities:
+            raw_label = normalize_text(entity.get("label", ""))
+            sensitive_type = LABEL_MAPPING.get(raw_label)
+
+            if not sensitive_type:
+                continue
+
+            value = str(entity.get("text", "")).strip()
+
+            if not value:
+                continue
+
+            # Do not interpret a username field's value as a person's name.
+            # Other predictions for the row remain eligible for validation.
+            if username_field and sensitive_type == "NAME":
+                continue
+
+            # If OCR explicitly identifies the field, don't allow
+            # GLiNER to assign a conflicting type to that row.
+            if field_type is not None and sensitive_type != field_type:
+                continue
+
+            if sensitive_type == "NAME":
+                if "@" in value or is_valid_email(text):
+                    continue
+
+                # Do not accept known field labels as person names.
+                if normalize_label(value) in {
+                    normalize_label(label)
+                    for label in NAME_FIELD_LABELS
+                }:
+                    continue
+
+            if sensitive_type == "EMAIL" and not is_valid_email(value):
+                continue
+
+            if sensitive_type in {"ACCOUNT_NUMBER", "ID"}:
+                if not is_numeric_identifier(value):
+                    continue
+
+            if sensitive_type == "BANK_CARD":
+                if not is_probable_bank_card(value):
+                    continue
+
+            entity_score = float(entity.get("score", 0.0))
+
+            confidence = max(
+                0.0,
+                min(0.99, (entity_score + ocr_confidence) / 2),
+            )
+
+            detections.append({
+                "type": sensitive_type,
+                "value": value,
+                "confidence": round(confidence, 4),
+                "box": box,
+                "source": "gliner",
+            })
+
+    return detections
+
+
+def deduplicate_detections(detections):
+    best = {}
+
+    for detection in detections:
+        dtype = detection.get("type")
+        value = str(detection.get("value", "")).strip()
+
+        if not dtype or not value:
+            continue
+
+        key = (dtype, normalize_text(value))
+        confidence = float(detection.get("confidence", 0.0))
+
+        if key not in best:
+            best[key] = detection
+            continue
+
+        old_confidence = float(best[key].get("confidence", 0.0))
+
+        if confidence > old_confidence:
+            best[key] = detection
+
+    return list(best.values())
+
+
+def clean_conflicting_detections(detections):
+    cleaned = []
+
+    normalized_name_labels = {
+        normalize_label(label)
+        for label in NAME_FIELD_LABELS
+    }
+
+    email_values = {
+        normalize_text(detection.get("value", ""))
+        for detection in detections
+        if detection.get("type") == "EMAIL"
+    }
+
+    password_values = {
+        normalize_text(detection.get("value", ""))
+        for detection in detections
+        if detection.get("type") == "PASSWORD"
+    }
+
+    # If GLiNER detects "Username" as NAME, record its box.
+    # A second NAME detection in the same box is likely the username
+    # value, not a confirmed personal name.
+    username_boxes = {
+        tuple(detection["box"])
+        for detection in detections
+        if detection.get("type") == "NAME"
+        and normalize_label(detection.get("value", ""))
+        in {
+            normalize_label("username"),
+            normalize_label("user name"),
+        }
+        and isinstance(detection.get("box"), (list, tuple))
+    }
+
+    for detection in detections:
+        dtype = detection.get("type")
+        value = str(detection.get("value", "")).strip()
+        normalized_value = normalize_text(value)
+
+        if dtype == "NAME":
+            if "@" in value:
+                continue
+
+            if normalize_label(value) in normalized_name_labels:
+                continue
+
+            box = detection.get("box")
+            if (
+                isinstance(box, (list, tuple))
+                and tuple(box) in username_boxes
+            ):
+                continue
+
+            is_email_username = any(
+                "@" in email
+                and normalized_value
+                == normalize_text(email.split("@", 1)[0])
+                for email in email_values
+            )
+
+            if is_email_username:
+                continue
+
+        if dtype in {"API_KEY", "SECRET"}:
+            if normalized_value in password_values:
+                continue
+
+        cleaned.append(detection)
+
+    return cleaned
+
+
+def final_validate_detections(detections):
+    validated = []
+
+    for detection in detections:
+        dtype = detection.get("type")
+        value = str(detection.get("value", "")).strip()
+
+        if dtype not in SUPPORTED_TYPES or not value:
+            continue
+
+        if dtype == "EMAIL":
+            if not is_valid_email(value):
+                continue
+
+        elif dtype == "PHONE":
+            digits = re.sub(r"\D", "", value)
+            if len(digits) < 7:
+                continue
+
+        elif dtype == "BANK_CARD":
+            if not is_probable_bank_card(value):
+                continue
+
+        elif dtype in {"ACCOUNT_NUMBER", "ID"}:
+            if not is_numeric_identifier(value):
+                continue
+
+        validated.append(detection)
+
+    return validated
+
+
+def detect_from_ocr(ocr_results):
+    if not ocr_results:
+        return []
+
+    detections = []
+
+    detections.extend(detect_labeled_values(ocr_results))
+    detections.extend(detect_account_from_context(ocr_results))
+    detections.extend(detect_with_gliner(ocr_results))
+
+    detections = deduplicate_detections(detections)
+    detections = clean_conflicting_detections(detections)
+    detections = final_validate_detections(detections)
+
+    def box_position(detection):
+        box = detection.get("box")
+
+        if isinstance(box, (list, tuple)) and len(box) >= 2:
+            return box[1], box[0]
+
+        return 0, 0
+
+    detections.sort(key=box_position)
+
+    return detections
+
+
+def detect_with_ai(input_data):
+    if isinstance(input_data, list):
+        return detect_from_ocr(input_data)
+
+    if isinstance(input_data, (str, Path)):
+        image_path = str(input_data)
+        ocr_results = extract_text(image_path)
+
+        return detect_from_ocr(ocr_results)
+
+    raise TypeError(
+        "detect_with_ai() expects "
+        "an image path or OCR result list."
+    )
+
+
+def print_sensitive_data(detections):
+    print()
+    print("=" * 40)
+    print("       SENSITIVE DATA ONLY")
+    print("=" * 40)
+
+    if not detections:
+        print()
+        print("No sensitive data detected.")
+        return
+
+    print()
+
+    for index, detection in enumerate(detections, start=1):
+        print(f"[{index}] {detection.get('type')}")
+        print(f"Value: {detection.get('value')}")
+        print(f"Confidence: {detection.get('confidence')}")
+        print(f"Box: {detection.get('box')}")
+        print()
+
+
+def main():
+    image_path = Path("dataset/mixed/info.png")
+
+    if not image_path.exists():
+        print(f"ERROR: Image not found: {image_path}")
+        return
+
+    print(f"Analyzing image: {image_path}")
+
+    detections = detect_with_ai(image_path)
+
+    print_sensitive_data(detections)
+
+
+if __name__ == "__main__":
+    main()
