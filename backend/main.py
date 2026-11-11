@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from backend.analyze import analyze_image, analyze_pdf
 from backend.protection import protect_image, SUPPORTED_METHODS
@@ -27,6 +28,16 @@ app = FastAPI(
     description="Image and PDF privacy risk assessment",
     version="2.0.0",
 )
+
+
+@app.on_event("startup")
+def load_models_at_startup() -> None:
+    """Load OCR and GLiNER once when the server starts (not on the first upload)."""
+    from backend.ocr.detector import warm_up as warm_up_ocr
+    from backend.detection.ai_detector import warm_up as warm_up_ai
+
+    warm_up_ocr()
+    warm_up_ai()
 
 
 HTML_PAGE = r"""
@@ -268,7 +279,7 @@ async def analyze_endpoint(file: UploadFile = File(...)):
                         status_code=400,
                         detail="The uploaded file is not a valid PDF.",
                     )
-            result = analyze_pdf(str(destination), verbose=False)
+            result = await run_in_threadpool(analyze_pdf, str(destination), verbose=False)
         else:
             # Verify that the uploaded file is a readable image.
             import cv2
@@ -278,7 +289,7 @@ async def analyze_endpoint(file: UploadFile = File(...)):
                     status_code=400,
                     detail="Could not read the uploaded image.",
                 )
-            result = analyze_image(str(destination), verbose=False)
+            result = await run_in_threadpool(analyze_image, str(destination), verbose=False)
 
         result["source_filename"] = stored_name
         result["original_name"] = original_name

@@ -21,6 +21,7 @@ the rest of PriviScan:
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import cv2
@@ -119,6 +120,46 @@ def _qr_detection(
         "box": box,
         "source": "VISION",
     }
+
+
+VISION_MAX_SIDE = int(os.environ.get("PRIVISCAN_VISION_MAX_SIDE", "2000"))
+
+_FACE_CASCADE = None
+
+
+def _shrink_for_vision(image):
+    """Shrink big photos before QR/face scanning. Returns (image, scale <= 1)."""
+    height, width = image.shape[:2]
+    longest = max(height, width)
+    if VISION_MAX_SIDE <= 0 or longest <= VISION_MAX_SIDE:
+        return image, 1.0
+    scale = VISION_MAX_SIDE / float(longest)
+    small = cv2.resize(
+        image,
+        (max(1, int(round(width * scale))), max(1, int(round(height * scale)))),
+        interpolation=cv2.INTER_AREA,
+    )
+    return small, scale
+
+
+def _scale_boxes_back(detections, scale):
+    """Convert boxes found on the shrunk image back to original coordinates."""
+    if scale == 1.0:
+        return detections
+    for detection in detections:
+        box = detection.get("box")
+        if box:
+            detection["box"] = [int(round(value / scale)) for value in box]
+    return detections
+
+
+def _get_face_cascade():
+    global _FACE_CASCADE
+    if _FACE_CASCADE is None:
+        _FACE_CASCADE = cv2.CascadeClassifier(
+            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        )
+    return _FACE_CASCADE
 
 
 def detect_qr_codes(
@@ -234,6 +275,7 @@ def detect_qr_codes(
 
 def detect_faces(
     image,
+    min_face: int = 40,
 ) -> list[dict]:
 
     gray = cv2.cvtColor(
@@ -241,14 +283,7 @@ def detect_faces(
         cv2.COLOR_BGR2GRAY,
     )
 
-    cascade_path = (
-        cv2.data.haarcascades
-        + "haarcascade_frontalface_default.xml"
-    )
-
-    cascade = cv2.CascadeClassifier(
-        cascade_path
-    )
+    cascade = _get_face_cascade()
 
     if cascade.empty():
         return []
@@ -257,7 +292,7 @@ def detect_faces(
         gray,
         scaleFactor=1.1,
         minNeighbors=5,
-        minSize=(40, 40),
+        minSize=(min_face, min_face),
     )
 
     detections = []
@@ -353,6 +388,40 @@ def deduplicate_vision_detections(
 # MAIN VISION FUNCTION
 # ============================================================
 
+def detect_vision_image(
+    image,
+) -> list[dict]:
+    """Faces and QR codes in an already loaded BGR image (numpy array)."""
+
+    detections = []
+
+    # Scan a shrunk copy: full-size photos made QR and face detection very
+    # slow. Boxes are converted back to the original image size afterwards.
+    small, scale = _shrink_for_vision(image)
+    min_face = max(24, int(round(40 * scale)))
+
+    # QR
+    detections.extend(
+        detect_qr_codes(
+            small
+        )
+    )
+
+    # Face
+    detections.extend(
+        detect_faces(
+            small,
+            min_face,
+        )
+    )
+
+    _scale_boxes_back(detections, scale)
+
+    return deduplicate_vision_detections(
+        detections
+    )
+
+
 def detect_vision(
     image_path: str,
 ) -> list[dict]:
@@ -362,27 +431,8 @@ def detect_vision(
     )
 
     if image is None:
-
         raise ValueError(
             f"Could not read image: {image_path}"
         )
 
-    detections = []
-
-    # QR
-    detections.extend(
-        detect_qr_codes(
-            image
-        )
-    )
-
-    # Face
-    detections.extend(
-        detect_faces(
-            image
-        )
-    )
-
-    return deduplicate_vision_detections(
-        detections
-    )
+    return detect_vision_image(image)

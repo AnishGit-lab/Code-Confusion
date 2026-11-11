@@ -19,6 +19,9 @@ PRIVISCAN_GLINER_MODEL    default "urchade/gliner_small-v2.1"
 PRIVISCAN_GLINER_LABELS   "core" (default: person name + address) or "full"
 PRIVISCAN_GLINER_BATCH    batch size, default 16
 PRIVISCAN_GLINER_THRESHOLD  default 0.55
+PRIVISCAN_GLINER_MAX_LINES  default 30 (max lines sent to the model per page)
+PRIVISCAN_GLINER_NAME_THRESHOLD  default 0.65 (minimum model score for a NAME)
+PRIVISCAN_GLINER_TEXT_NAME_THRESHOLD  default 0.85 (same, for PDF / text files)
 PRIVISCAN_DEBUG           "1" prints how many items each stage found
 """
 
@@ -43,6 +46,10 @@ USE_GLINER = os.environ.get("PRIVISCAN_USE_GLINER", "1") != "0"
 LABEL_SET = os.environ.get("PRIVISCAN_GLINER_LABELS", "core").lower()
 BATCH_SIZE = max(1, int(os.environ.get("PRIVISCAN_GLINER_BATCH", "16")))
 THRESHOLD = float(os.environ.get("PRIVISCAN_GLINER_THRESHOLD", "0.55"))
+MAX_NER_LINES = max(1, int(os.environ.get("PRIVISCAN_GLINER_MAX_LINES", "30")))
+# A name needs a more confident model score than an address (UI text such as
+# "View All" is often tagged with a low score).
+NAME_THRESHOLD = float(os.environ.get("PRIVISCAN_GLINER_NAME_THRESHOLD", "0.65"))
 DEBUG = os.environ.get("PRIVISCAN_DEBUG", "0") == "1"
 
 _GLINER_MODEL = None
@@ -78,19 +85,7 @@ LABEL_MAPPING = {
 }
 
 # Words that mean "this is an organisation / heading, not a person".
-ORG_WORDS = {
-    "university", "college", "school", "institute", "academy", "bank", "hospital",
-    "clinic", "company", "corporation", "corp", "inc", "ltd", "llc", "department",
-    "faculty", "office", "center", "centre", "information", "student", "employee",
-    "account", "statement", "report", "form", "card", "certificate", "invoice",
-    "receipt", "services", "service", "system", "national", "republic", "ministry",
-    "government", "page", "confidential", "private", "public", "welcome", "dear",
-    "profile", "education", "experience", "skills", "skill", "career", "interest",
-    "project", "projects", "technical", "academic", "teamwork", "summary",
-    "objective", "contact", "references", "languages", "certifications",
-    "developer", "engineer", "manager", "intern", "software", "python", "aspiring",
-    "capstone", "design", "application", "workflow", "detection", "risk",
-}
+ORG_WORDS = rules.NAME_STOPWORDS
 
 STREET_WORDS = {
     "street", "st", "road", "rd", "avenue", "ave", "lane", "ln", "drive", "dr",
@@ -265,6 +260,10 @@ def _ner_candidates(
             continue
 
         candidates.append(index)
+
+    # Dense pages: keep the model run short (names/addresses are short lines).
+    if len(candidates) > MAX_NER_LINES:
+        candidates = sorted(sorted(candidates, key=lambda i: len(items[i]["text"]))[:MAX_NER_LINES])
     return candidates
 
 
@@ -301,6 +300,51 @@ def _valid_address(value: str) -> bool:
         or "," in value
         or bool(words & STREET_WORDS)
     )
+
+
+# Amounts / currency: a line such as "Starbucks  -4,500 KRW" holds a merchant, not a person.
+AMOUNT_RE = re.compile(
+    "[\u20a9$\u20ac\u00a3\u00a5]"
+    r"|\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b"
+    r"|\b\d+\.\d{2}\b"
+    r"|\b(?:KRW|USD|EUR|GBP|JPY|NPR|INR|CNY)\b",
+    re.IGNORECASE,
+)
+
+# Product / technology words that a language model sometimes tags as names.
+TECH_WORDS = {
+    "pillow", "opencv", "paddleocr", "paddlepaddle", "fastapi", "flask", "django",
+    "numpy", "pandas", "pytorch", "tensorflow", "keras", "python", "java",
+    "javascript", "typescript", "react", "docker", "git", "github", "linux",
+    "windows", "excel", "azure", "aws", "gliner", "tesseract", "sql", "mysql",
+    "html", "css", "ocr", "api", "rest", "uvicorn", "scikit", "matplotlib",
+}
+
+
+NATIVE_NAME_THRESHOLD = float(os.environ.get("PRIVISCAN_GLINER_TEXT_NAME_THRESHOLD", "0.85"))
+
+
+def _native_name_ok(line: str, value: str, score: float = 1.0) -> bool:
+    """
+    Extra checks for names found in PDF / plain-text lines (not used for images).
+    Skill lists such as "OCR / Computer Vision: PaddleOCR, OpenCV, Pillow" were
+    producing single-word "names".
+    """
+    words = value.split()
+    # In documents, headings ("Smishing", "Social Engineering") look like names to the
+    # model. A name from the model must be confident and have at least two words;
+    # names with a label ("Name: ...") or a title ("Dr. ...") come from the rules.
+    if len(words) < 2 or score < NATIVE_NAME_THRESHOLD:
+        return False
+    if {w.lower().strip(".,") for w in words} & TECH_WORDS:
+        return False
+    # item inside a comma separated list
+    if re.search(r"(?:,\s*|/\s*)" + re.escape(value) + r"\b|\b" + re.escape(value) + r"\s*(?:,|/)", line):
+        return False
+    # a single word is a plausible name only when it is the whole line
+    if len(words) == 1 and line.strip().strip(":").strip() != value:
+        return False
+    return True
 
 
 def _validate_entity(detection_type: str, value: str) -> bool:
@@ -364,8 +408,20 @@ def detect_with_gliner(
                 continue
             if not _validate_entity(detection_type, value):
                 continue
+            if (
+                item.get("native")
+                and detection_type == "NAME"
+                and not _native_name_ok(item["text"], value, score)
+            ):
+                continue
 
             score = float(entity.get("score", 0.0))
+            if detection_type == "NAME":
+                if score < NAME_THRESHOLD:
+                    continue
+                # money lines (transaction rows): only a confident multi-word name
+                if AMOUNT_RE.search(item["text"]) and (len(value.split()) < 2 or score < 0.80):
+                    continue
             if item.get("native"):
                 confidence = max(0.0, min(0.99, score))
             else:

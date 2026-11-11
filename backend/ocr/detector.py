@@ -19,9 +19,12 @@ Why this is faster than the old version
 
 Environment variables
 ---------------------
-PRIVISCAN_OCR_MAX_SIDE   default 1600 (raise to 2000+ if small text is missed)
+PRIVISCAN_OCR_MAX_SIDE   default 2560. Only larger images are shrunk. Set 0 to never
+                         shrink (best accuracy, slowest). Lower = faster, but small
+                         text may be misread.
 PRIVISCAN_OCR_MKLDNN     "1" to enable oneDNN (faster, but crashes on some
                          PaddlePaddle builds - default "0")
+PRIVISCAN_OCR_MODEL      "mobile" (default, faster) or "server" (original, more accurate)
 PRIVISCAN_OCR_THREADS    CPU threads for inference (default: all cores, max 8)
 """
 
@@ -32,8 +35,9 @@ import statistics
 from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
 
-OCR_MAX_SIDE = int(os.environ.get("PRIVISCAN_OCR_MAX_SIDE", "1600"))
+OCR_MAX_SIDE = int(os.environ.get("PRIVISCAN_OCR_MAX_SIDE", "2560"))
 USE_MKLDNN = os.environ.get("PRIVISCAN_OCR_MKLDNN", "0") == "1"
+OCR_MODEL = os.environ.get("PRIVISCAN_OCR_MODEL", "mobile").lower()
 CPU_THREADS = int(os.environ.get("PRIVISCAN_OCR_THREADS", str(min(os.cpu_count() or 4, 8))))
 
 _OCR = None
@@ -54,7 +58,19 @@ def _create_ocr():
         use_textline_orientation=False,
     )
 
-    attempts = [
+    # The default PaddleOCR 3.x detector is the large "server" model. The
+    # "mobile" models are several times faster on a CPU and are accurate enough
+    # for screenshots and documents. Set PRIVISCAN_OCR_MODEL=server to go back.
+    mobile = dict(
+        text_detection_model_name="PP-OCRv5_mobile_det",
+        text_recognition_model_name="en_PP-OCRv5_mobile_rec",
+    )
+
+    attempts = []
+    if OCR_MODEL == "mobile":
+        attempts.append({**base, **fast, **mobile, "cpu_threads": CPU_THREADS})
+        attempts.append({**base, **fast, **mobile})
+    attempts += [
         {**base, **fast, "cpu_threads": CPU_THREADS},  # all speed options
         {**base, **fast},                              # older 3.x without cpu_threads
         base,                                          # the original configuration
@@ -63,8 +79,10 @@ def _create_ocr():
     last_error: Optional[Exception] = None
     for options in attempts:
         try:
-            return PaddleOCR(**options)
-        except Exception as exc:  # unknown argument for this PaddleOCR version
+            engine = PaddleOCR(**options)
+            print(f"PaddleOCR started with: {sorted(options)}")
+            return engine
+        except Exception as exc:  # unknown argument / model not available
             last_error = exc
     raise RuntimeError(f"Could not create PaddleOCR: {last_error}")
 

@@ -94,6 +94,14 @@ PERSON_NAME_PREFIX = {
 
 NUMBER_TOKENS = {"no", "number", "num", "nr", "id", "ident", "identifier", "code"}
 
+PASSWORD_TOKENS = {"password", "passwd", "passcode", "pwd", "pin"}
+PASSWORD_LABEL_EXTRA = {
+    "new", "old", "current", "confirm", "login", "account", "user", "admin", "root",
+    "master", "wifi", "wi", "fi", "email", "mail", "database", "db", "app", "your",
+    "enter", "retype", "re", "type", "repeat", "temporary", "temp", "one", "time",
+    "otp", "code", "number", "no", "card", "bank", "phone",
+}
+
 PERSONAL_ID_PREFIX = {
     "student", "staff", "employee", "faculty", "member", "membership",
     "registration", "reg", "roll", "matric", "patient", "customer", "client",
@@ -211,8 +219,7 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 
 
 def _clean_value(value: Any) -> str:
-    value = _text(value).strip().strip(" \t\r\n\"'`")
-    return value.rstrip(",;").strip()
+    return _text(value).strip().strip(" \t\r\n\"'`,;").strip()
 
 
 def _digits(value: str) -> str:
@@ -368,8 +375,12 @@ def classify_label(label: str) -> Optional[str]:
     }:
         return "NEG"
 
-    if token_set & {"password", "passwd", "passcode", "pwd", "pin"}:
-        return "PASSWORD"
+    if token_set & PASSWORD_TOKENS:
+        # "Password", "New password", "WiFi password", "PIN code" are field labels.
+        # "Password guessing", "Weak password policy" are ordinary text.
+        if len(tokens) <= 3 and token_set <= PASSWORD_TOKENS | PASSWORD_LABEL_EXTRA:
+            return "PASSWORD"
+        return None
 
     if "private" in token_set and "key" in token_set or token_set & {"credential", "credentials"}:
         return "SECRET"
@@ -502,9 +513,42 @@ def _is_person_like(value: str) -> bool:
     return True
 
 
+def _looks_like_secret(token: str) -> bool:
+    """API keys / tokens always contain digits or symbols (or are long and mixed-case)."""
+    if len(token) < 8 or not re.fullmatch(r"[A-Za-z0-9_\-+/=.:@!#$%^&*~]+", token):
+        return False
+    if re.fullmatch(r"[A-Za-z]+[.,;:!?]?", token):
+        has_upper = any(c.isupper() for c in token)
+        has_lower = any(c.islower() for c in token)
+        return has_upper and has_lower and len(token) >= 16  # e.g. ThisIsALongMixedKey
+    return True
+
+
+def _looks_like_password(value: str, strict: bool = False) -> bool:
+    """Reject sentences. strict=True (value on the next line) also needs complexity."""
+    words = value.split()
+    if not 3 <= len(value) <= 128 or not words:
+        return False
+    if len(words) >= 4:
+        return False  # prose
+    if len(words) >= 2 and value.rstrip().endswith((".", "!", "?")):
+        return False  # a sentence
+    if re.fullmatch(r"[A-Za-z]+[.,;:]", value.strip()):
+        return False  # a plain word with punctuation, e.g. "key."
+    if strict:
+        if len(words) != 1:
+            return False
+        has_digit = any(c.isdigit() for c in value)
+        has_symbol = bool(re.search(r"[^A-Za-z0-9]", value))
+        mixed = any(c.islower() for c in value) and any(c.isupper() for c in value)
+        return has_digit or has_symbol or mixed
+    return True
+
+
 def _validate_for_type(
     detection_type: str,
     raw_value: str,
+    strict: bool = False,
 ) -> List[Tuple[str, float, str]]:
     """
     Validate a value that appeared after a label of the given type.
@@ -515,12 +559,11 @@ def _validate_for_type(
         return []
 
     if detection_type == "PASSWORD":
-        value = value[:128]
-        return [("PASSWORD", 0.99, value)] if len(value) >= 3 else []
+        return [("PASSWORD", 0.99, value)] if _looks_like_password(value, strict) else []
 
     if detection_type in {"API_KEY", "SECRET"}:
         token = value.split()[0].strip(",;\"'")
-        return [(detection_type, 0.98, token)] if len(token) >= 8 else []
+        return [(detection_type, 0.98, token)] if _looks_like_secret(token) else []
 
     if detection_type == "EMAIL":
         return [("EMAIL", 0.99, _normalise_email(m.group(0))) for m in EMAIL_LOOSE_RE.finditer(value)]
@@ -724,14 +767,15 @@ def _split_label_value(line: str) -> Optional[Tuple[str, str, str]]:
     # No separator: "Student ID 2024891090", "Passport M12345678"
     words = line.split()
     if 2 <= len(words) <= 7:
-        for cut in range(1, min(len(words), 5)):
+        # longest label first: "Passport No M123" -> label "Passport No", value "M123"
+        for cut in range(min(len(words) - 1, 4), 0, -1):
             label = " ".join(words[:cut])
             value = " ".join(words[cut:])
             kind = classify_label(label)
             if kind and kind != "NEG" and VALUE_AFTER_LABEL_RE.match(value):
-                if kind in {"NAME", "ADDRESS"}:
-                    continue  # too ambiguous without a separator
-                if not any(ch.isdigit() for ch in value) and "@" not in value and kind not in {"PASSWORD"}:
+                if kind in {"NAME", "ADDRESS", "PASSWORD", "API_KEY", "SECRET"}:
+                    continue  # too ambiguous in normal sentences without a ":" or "="
+                if not any(ch.isdigit() for ch in value) and "@" not in value:
                     continue
                 return label, value, "no-separator"
     return None
@@ -751,6 +795,168 @@ def _box_for(item: Dict[str, Any], start: int, end: int, base: int) -> Tuple[Any
     if box:
         return box, None
     return [base + start, 0, base + end, 1], "offset"
+
+
+# ------------------------------------------------------------
+# Unlabeled person names (no label, no AI model needed)
+# ------------------------------------------------------------
+
+NAME_STOPWORDS = set(NEGATIVE_TOKENS) | set(LABEL_VOCAB) | {
+    # organisations / document headings
+    "university", "college", "school", "institute", "academy", "bank", "hospital",
+    "clinic", "company", "corporation", "corp", "inc", "ltd", "llc", "department",
+    "faculty", "office", "center", "centre", "information", "student", "employee",
+    "statement", "report", "form", "certificate", "services", "service", "system",
+    "national", "republic", "ministry", "government", "confidential", "private",
+    "public", "welcome", "dear", "profile", "education", "experience", "skills",
+    "skill", "career", "interest", "project", "projects", "technical", "academic",
+    "teamwork", "summary", "objective", "references", "languages", "certifications",
+    "developer", "engineer", "manager", "intern", "software", "python", "aspiring",
+    "capstone", "design", "application", "workflow", "detection", "risk", "analyst",
+    "director", "assistant", "consultant", "specialist", "teacher", "professor",
+    "undergraduate", "graduate", "degree", "bachelor", "master", "science",
+    "computer", "engineering", "business", "management", "development", "research",
+    "security", "privacy", "protection", "digital", "content", "data", "image",
+    # generic words that start lines
+    "total", "amount", "balance", "description", "details", "status", "type",
+    "title", "subject", "sent", "received", "hello", "thanks", "thank", "regards",
+    "sincerely", "signature", "approved", "pending", "active", "main", "home",
+    "about", "terms", "conditions", "policy", "settings", "login", "logout",
+    "sign", "submit", "cancel", "next", "back", "search", "menu", "help",
+    "support", "news", "personal", "details", "resume", "curriculum", "vitae",
+    # function words
+    "and", "or", "of", "the", "for", "with", "in", "to", "a", "an", "at", "by",
+    "is", "are", "on", "from", "not", "no", "yes",
+    # places often written in Title Case
+    "korea", "seoul", "busan", "usa", "nepal", "japan", "india", "china",
+    "america", "kingdom", "york", "city", "street", "road", "south", "north",
+    "east", "west", "united", "states", "republic",
+    # security / IT headings and document structure
+    "phishing", "smishing", "vishing", "malware", "ransomware", "spyware", "virus",
+    "viruses", "trojan", "worm", "botnet", "attack", "attacks", "threat", "threats",
+    "vulnerability", "vulnerabilities", "exploit", "social", "engineering", "brute",
+    "force", "dictionary", "injection", "scripting", "cross", "site", "man", "middle",
+    "denial", "firewall", "encryption", "authentication", "authorization", "network",
+    "protocol", "cyber", "cybersecurity", "hacking", "hacker", "breach", "leak",
+    "fraud", "scam", "spoofing", "sniffing", "keylogger", "backdoor", "rootkit",
+    "zero", "day", "patch", "antivirus", "vpn", "proxy", "guessing", "reuse",
+    "common", "types", "example", "examples", "introduction", "conclusion",
+    "chapter", "section", "lecture", "notes", "slide", "figure", "table", "tips",
+    "prevention", "protection", "defense", "defence", "risks", "overview",
+    # buttons, menus and labels of apps / banking screenshots ("View All", "Send Money")
+    "view", "all", "see", "more", "less", "show", "hide", "details", "detail",
+    "history", "transactions", "transaction", "transfer", "transfers", "send",
+    "receive", "pay", "payment", "payments", "paid", "deposit", "deposits",
+    "withdraw", "withdrawal", "withdrawals", "balances", "accounts", "setting",
+    "settings", "notifications", "notification", "filter", "filters", "sort",
+    "today", "yesterday", "tomorrow", "recent", "recently", "activity",
+    "activities", "cards", "savings", "checking", "current", "complete",
+    "completed", "success", "successful", "failed", "failure", "error", "edit",
+    "done", "next", "previous", "continue", "back", "close", "cancel", "ok",
+    "okay", "confirm", "confirmation", "log", "signup", "add", "remove",
+    "delete", "copy", "share", "download", "upload", "language", "new", "free",
+    "buy", "sell", "trade", "invest", "investment", "loan", "loans", "credit",
+    "debit", "reward", "rewards", "offers", "offer", "shop", "store", "cart",
+    "order", "orders", "track", "tracking", "update", "updates", "version",
+    "terms", "forgot", "reset", "verify", "verification", "code", "resend",
+    "skip", "learn", "explore", "discover", "get", "started", "start", "finish",
+    "review", "rate", "rates", "feedback", "alerts", "alert", "message",
+    "messages", "inbox", "drafts", "spam", "trash", "archive", "select",
+    "selected", "enable", "disable", "quick", "actions", "action", "overview",
+    "dashboard", "statements", "bills", "top", "up", "down", "scan", "qr", "now",
+    "money", "wallet", "mobile", "banking", "online", "secure", "safe", "easy",
+    "fast", "instant", "daily", "weekly", "monthly", "yearly", "annual", "limit",
+    "limits", "fee", "fees", "charge", "charges", "exchange", "currency", "via",
+    "per", "each", "every", "any", "other", "others", "another", "your", "you",
+    "my", "me", "we", "us", "our", "it", "its", "this", "that", "these", "those",
+    "here", "there", "what", "when", "where", "why", "how", "who", "which",
+    "please", "tap", "click", "press", "swipe", "enter", "choose", "pick", "set",
+    "change", "manage", "create", "open", "refresh", "reload", "retry", "try",
+    "again", "loading", "wait", "processing", "premium", "platinum", "standard",
+    "basic", "default", "custom", "general", "advanced", "options", "option",
+    "profile", "category", "categories", "income", "expense", "expenses",
+    "budget", "spending", "insights", "analytics", "reports", "history",
+    # calendar
+    "january", "february", "march", "april", "june", "july", "august",
+    "september", "october", "november", "december", "monday", "tuesday",
+    "wednesday", "thursday", "friday", "saturday", "sunday",
+}
+
+PERSONAL_NEIGHBOUR_TYPES = {
+    "EMAIL", "PHONE", "ID", "GOVERNMENT_ID", "ACCOUNT_NUMBER",
+    "DATE_OF_BIRTH", "ADDRESS", "BANK_CARD",
+}
+
+TITLED_NAME_RE = re.compile(
+    r"(?:\b(?:Mr|Mrs|Ms|Miss|Mx|Dr|Prof)\.?\s+|\bDear\s+|\b(?:Prepared|Submitted|Signed|Issued)\s+(?:by|to)\s+)"
+    r"([A-Z][A-Za-z'\u2019-]+(?:\s+[A-Z][A-Za-z'\u2019-]+){0,2})"
+)
+
+
+def _name_candidate(text: str) -> bool:
+    """True when a whole line looks like a person's name (2-4 Latin words)."""
+    text = text.strip()
+    if not 4 <= len(text) <= 40 or any(ch.isdigit() for ch in text):
+        return False
+    if re.search(r"[^\w\s.'\u2019-]", text) or "_" in text:
+        return False
+    words = text.split()
+    if not 2 <= len(words) <= 4:
+        return False
+    for word in words:
+        bare = re.sub(r"[.'\u2019-]", "", word)
+        if not bare or not bare.isalpha() or not (word[0].isascii() and word[0].isalpha()):
+            return False
+        if len(bare) < 2 and not word.endswith("."):
+            return False
+    if {w.lower().strip(".") for w in words} & NAME_STOPWORDS:
+        return False
+    all_upper = all(w.replace(".", "").isupper() for w in words)
+    title_case = all(w[0].isupper() and not w.isupper() for w in words)
+    return all_upper or title_case
+
+
+def _unlabeled_names(
+    items: Sequence[Dict[str, Any]],
+    used: Sequence[bool],
+    detections: Sequence[Dict[str, Any]],
+    det_indexes: Sequence[int],
+) -> List[Tuple[int, str, float, str]]:
+    """Return (item_index, name, confidence, source) for names without a label."""
+    personal_at = [
+        det_indexes[i] for i, det in enumerate(detections)
+        if det.get("type") in PERSONAL_NEIGHBOUR_TYPES
+    ]
+    explained = set(det_indexes)
+    found: List[Tuple[int, str, float, str]] = []
+    nonempty = [i for i, item in enumerate(items) if _text(item.get("text")).strip()]
+
+    for position, index in enumerate(nonempty):
+        text = _text(items[index].get("text")).strip()
+        if index in explained or used[index] or classify_label(text) or _label_only(text):
+            continue
+
+        # "Dr. Anish Kandel", "Dear Anish Kandel", "Prepared by Anish Kandel"
+        titled = TITLED_NAME_RE.search(text)
+        if titled:
+            name = titled.group(1).strip()
+            if not ({w.lower() for w in name.split()} & NAME_STOPWORDS):
+                found.append((index, name, 0.85, "name_title"))
+                continue
+
+        if not _name_candidate(text):
+            continue
+
+        # a. one of the first lines of the page/document, and the document has personal data
+        if position <= 2 and any(i <= index + 15 for i in personal_at):
+            found.append((index, text, 0.72, "name_header"))
+            continue
+
+        # b. right next to an email / phone / ID / address
+        if any(abs(i - index) <= 2 for i in personal_at):
+            found.append((index, text, 0.62, "name_nearby"))
+
+    return found
 
 
 def detect_lines(items: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -778,12 +984,15 @@ def detect_lines(items: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
         value = item.get("confidence")
         return None if value is None else max(0.5, min(1.0, _safe_float(value, 1.0)))
 
+    det_indexes: List[int] = []          # item index of every detection (same order)
+
     def emit(kind, conf, value, item, start, end, source, index):
         cap = ocr_conf(item)
         if cap is not None:
             conf = min(conf, cap)
         box, box_kind = _box_for(item, start, end, offsets[index])
         detections.append(_make_detection(kind, value, conf, box, source, box_kind))
+        det_indexes.append(index)
 
     for index, item in enumerate(items):
         text = _text(item.get("text")).strip()
@@ -831,7 +1040,7 @@ def detect_lines(items: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 next_text = _text(items[nxt].get("text")).strip()
                 if classify_label(next_text) or _label_only(next_text):
                     break  # next line is another label
-                found = _validate_for_type(pending_type, next_text)
+                found = _validate_for_type(pending_type, next_text, strict=True)
                 if found:
                     for det_type, conf, det_value in found:
                         start = max(next_text.find(det_value), 0)
@@ -873,6 +1082,12 @@ def detect_lines(items: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 if _high_entropy_secret(word):
                     start = text.find(word)
                     emit("API_KEY", 0.7, word, item, start, start + len(word), "entropy", index)
+
+    # ---- 6. names that have no label (header line, next to personal data, "Dr. X")
+    for index, name, conf, source in _unlabeled_names(items, used, detections, det_indexes):
+        item = items[index]
+        start = max(_text(item.get("text")).find(name), 0)
+        emit("NAME", conf, name, item, start, start + len(name), source, index)
 
     return detections
 
@@ -944,20 +1159,38 @@ def _json_detections(text: str) -> List[Dict[str, Any]]:
 
 
 def _table_detections(lines: Sequence[str]) -> List[Dict[str, Any]]:
-    """Header row + value row, e.g.  Name | Email  /  Anish | a@b.com"""
-    rows = [[cell.strip() for cell in line.split("|")] for line in lines if "|" in line]
+    """
+    CSV / TSV / semicolon / pipe tables: the header row names the columns,
+    every following row of the same width is read column by column.
+        Name,Email,Phone
+        Anish Kandel,a@b.com,+82 10-1234-5678
+    """
+    import csv
+
     results: List[Dict[str, Any]] = []
-    for index in range(len(rows) - 1):
-        header, values = rows[index], rows[index + 1]
-        if len(header) < 2 or len(header) != len(values):
-            continue
-        kinds = [classify_label(cell) for cell in header]
-        if sum(1 for k in kinds if k and k != "NEG") < 2:
-            continue
-        for kind, value in zip(kinds, values):
-            if kind and kind != "NEG":
-                for det_type, conf, det_value in _validate_for_type(kind, value):
-                    results.append(_make_detection(det_type, det_value, conf, None, "table"))
+    lines = [line for line in lines if line.strip()]
+
+    for delimiter in (",", "\t", ";", "|"):
+        rows = [
+            [cell.strip() for cell in row]
+            for row in csv.reader(lines, delimiter=delimiter, skipinitialspace=True)
+        ]
+        index = 0
+        while index < len(rows) - 1:
+            header = rows[index]
+            kinds = [classify_label(cell) for cell in header]
+            known = sum(1 for kind in kinds if kind and kind != "NEG")
+            if len(header) < 2 or known < 2:
+                index += 1
+                continue
+
+            index += 1
+            while index < len(rows) and len(rows[index]) == len(header):
+                for kind, value in zip(kinds, rows[index]):
+                    if kind and kind != "NEG":
+                        for det_type, conf, det_value in _validate_for_type(kind, value):
+                            results.append(_make_detection(det_type, det_value, conf, None, "table"))
+                index += 1
     return results
 
 
@@ -1081,7 +1314,11 @@ def resolve_conflicts(detections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     best: Dict[tuple, Dict[str, Any]] = {}
     order: List[tuple] = []
     for item in detections:
-        value_key = re.sub(r"\D", "", item.get("value", "")) or item.get("value", "").lower()
+        raw_value = str(item.get("value", ""))
+        if re.fullmatch(r"[\d\s+().\-/]+", raw_value):
+            value_key = re.sub(r"\D", "", raw_value)          # numeric: ignore separators
+        else:
+            value_key = re.sub(r"\s+", " ", raw_value.strip().lower())  # keep the full text
         key = (value_key, _box_key(item))
         if key not in best:
             best[key] = item

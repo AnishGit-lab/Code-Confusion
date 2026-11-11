@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import argparse
@@ -6,21 +5,30 @@ import json
 import os
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
 import fitz  # PyMuPDF
 
 from backend.ocr.detector import extract_text
-from backend.detection.ai_detector import detect_with_ai
+from backend.detection.ai_detector import detect_with_ai, detect_text_with_ai
 from backend.detection.sensitive import normalize_detections
 from backend.risk.scoring import score_detections, calculate_document_risk
 from backend.detection.sensitive import detect_text, deduplicate_detections
 from backend.detection.context import analyze_context
 
 try:
-    from backend.vision import detect_visual
+    from backend.vision import detect_vision_image
 except Exception:
+    detect_vision_image = None
+
+try:
+    # vision.py defines detect_vision(); the old name detect_visual does not exist,
+    # so the import failed silently and faces/QR codes were never detected here.
+    from backend.vision import detect_vision as detect_visual
+except Exception as exc:
+    print(f"WARNING: vision module not available: {exc}")
     detect_visual = None
 
 
@@ -98,9 +106,19 @@ def _normalize_visual_result(item: Any) -> Dict[str, Any]:
 
 
 def _detection_key(item: Dict[str, Any]) -> tuple:
+    # Include the location: the same value in two places must stay two
+    # detections, otherwise the second copy is never blurred.
+    box = item.get("box")
+    box_key = None
+    if item.get("box_kind") != "offset" and isinstance(box, (list, tuple)) and box:
+        try:
+            box_key = tuple(int(round(float(v) / 4.0)) for v in box[:4])
+        except (TypeError, ValueError):
+            box_key = None
     return (
         str(item.get("type", "")).upper(),
         str(item.get("value", "")).strip().lower(),
+        box_key,
     )
 
 
@@ -232,6 +250,28 @@ def _score_detections_compat(
 
     average_score = sum(scores) / len(scores) if scores else 0.0
     final_score = min(100.0, max(scores)) if scores else 0.0
+    level = _risk_level(final_score)
+    extra: Dict[str, Any] = {}
+
+    # Overall (document) risk: use the SAME calculation as analyze_pdf, which
+    # adds the combined exposure of all items and the linkability adjustment.
+    # Before, images and text used only the single highest item risk, so the
+    # same detections gave a lower overall risk than in a PDF.
+    if detections:
+        try:
+            document = calculate_document_risk(detections)
+            final_score = _safe_float(document.get("risk_score"), final_score)
+            level = document.get("risk_level") or _risk_level(final_score)
+            average_score = _safe_float(
+                document.get("average_risk_score"), average_score
+            )
+            extra = {
+                "aggregate_item_risk": document.get("aggregate_item_risk", 0.0),
+                "linkability_adjustment": document.get("linkability_adjustment", 0.0),
+                "credential_override": document.get("credential_override", False),
+            }
+        except Exception as exc:
+            print(f"WARNING: document risk calculation failed, using highest item: {exc}")
 
     return {
         "detections": scored_items,
@@ -239,8 +279,41 @@ def _score_detections_compat(
         "average_risk_score": round(average_score, 2),
         "final_risk_score": round(final_score, 2),
         "risk_score": round(final_score, 2),
-        "risk_level": _risk_level(final_score),
+        "risk_level": str(level).upper(),
+        **extra,
     }
+
+
+def _timed(function, *args):
+    """Run function(*args) and return (result, seconds)."""
+    started = time.perf_counter()
+    result = function(*args)
+    return result, round(time.perf_counter() - started, 3)
+
+
+def _assess_document(
+    detections: List[Dict[str, Any]],
+    text_items: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    ONE risk assessment for images, text files and PDFs.
+
+    Every analyze_* function calls this, so the same detections always give
+    the same item risks, document risk, level and sector - whatever the
+    file type was.
+    """
+    result = _score_detections_compat(detections)
+
+    try:
+        context = analyze_context(text_items, result.get("detections") or detections)
+    except Exception as exc:
+        print(f"WARNING: sector analysis failed: {exc}")
+        context = {}
+
+    result["sector"] = context.get("sector", "UNKNOWN")
+    result["sector_confidence"] = context.get("confidence", 0.0)
+    result["sector_matched_keywords"] = context.get("matched_keywords", [])
+    return result
 
 
 # ============================================================
@@ -343,13 +416,23 @@ def analyze_image(
     if verbose:
         print("[1/5] Running OCR...")
 
-    ocr_results = _run_ocr(image_path)
+    timings: Dict[str, float] = {}
+    started = time.perf_counter()
+
+    # Face/QR detection (OpenCV) does not depend on OCR, so run both together.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        visual_future = pool.submit(_timed, _run_visual, image_path)
+        step = time.perf_counter()
+        ocr_results = _run_ocr(image_path)
+        timings["ocr"] = round(time.perf_counter() - step, 3)
 
     if verbose:
         print(f"OCR detected {len(ocr_results)} text regions.")
         print("[2/5] Running AI text detection...")
 
+    step = time.perf_counter()
     text_detections = _run_ai(ocr_results)
+    timings["text_detection"] = round(time.perf_counter() - step, 3)
 
     if verbose:
         print(
@@ -357,7 +440,7 @@ def analyze_image(
         )
         print("[3/5] Running visual detection...")
 
-    visual_detections = _run_visual(image_path)
+    visual_detections, timings["vision"] = visual_future.result()
 
     if verbose:
         print(
@@ -373,7 +456,13 @@ def analyze_image(
     if verbose:
         print("[5/5] Calculating risk...")
 
-    scored = _score_detections_compat(merged)
+    step = time.perf_counter()
+    scored = _assess_document(merged, ocr_results)
+    timings["risk"] = round(time.perf_counter() - step, 3)
+    timings["total"] = round(time.perf_counter() - started, 3)
+
+    if verbose or os.environ.get("PRIVISCAN_DEBUG") == "1":
+        print(f"Timings (seconds): {timings}")
 
     if verbose:
         print(f"Detections : {scored['total_detections']}")
@@ -385,6 +474,7 @@ def analyze_image(
         "ocr_results": ocr_results,
         "text_detections": text_detections,
         "visual_detections": visual_detections,
+        "timings": timings,
         **scored,
     }
 
@@ -398,14 +488,14 @@ def analyze_text(text: str) -> Dict[str, Any]:
     Analyze extracted text using PriviScan's existing detector
     and risk-scoring pipeline.
     """
-    from backend.detection.sensitive import detect_text
-
-    detections = detect_text(text)
+    detections = detect_text_with_ai(text)
 
     if not isinstance(detections, list):
         detections = []
 
-    scored = _score_detections_compat(detections)
+    scored = _assess_document(
+        detections, [{"text": text, "confidence": 1.0, "box": None}]
+    )
 
     return {
         "text": text,
@@ -498,6 +588,57 @@ def _ocr_pdf_page(page: Any, page_number: int, image_dir: Path,
             'source': 'ocr',
         })
     return converted
+
+
+def _detect_pdf_visuals(page: Any, page_number: int) -> List[Dict[str, Any]]:
+    """
+    Faces and QR codes on a PDF page.
+
+    A photo in a PDF is an embedded image, not text, so the text detectors never
+    see it. Pages that contain images are rendered once and scanned with the same
+    vision code used for uploaded images. Boxes are returned in PDF points, the
+    same coordinates the text detections and the redaction code use.
+    """
+    if detect_vision_image is None:
+        return []
+
+    try:
+        if not page.get_images(full=True):
+            return []  # no embedded picture on this page -> nothing to scan
+
+        import numpy as np
+        import cv2
+
+        longest = max(float(page.rect.width), float(page.rect.height)) or 842.0
+        zoom = min(2.0, max(1.0, 1400.0 / longest))
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+
+        pixels = np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(
+            pixmap.height, pixmap.width, pixmap.n
+        )
+        if pixmap.n == 1:
+            image = cv2.cvtColor(pixels, cv2.COLOR_GRAY2BGR)
+        else:
+            image = cv2.cvtColor(pixels[:, :, :3], cv2.COLOR_RGB2BGR)
+
+        found = detect_vision_image(image)
+    except Exception as exc:
+        print(f"WARNING: could not scan page {page_number} for faces/QR codes: {exc}")
+        return []
+
+    items: List[Dict[str, Any]] = []
+    for detection in found:
+        raw = detection.get("box")
+        if not (isinstance(raw, (list, tuple)) and len(raw) >= 4):
+            continue
+        box = [round(float(value) / zoom, 2) for value in raw[:4]]
+        item = dict(detection)
+        item["box"] = box
+        item["boxes"] = [box]
+        item["page"] = page_number
+        item["source"] = "pdf_vision"
+        items.append(item)
+    return items
 
 
 def _boxes_for_pdf_text(page: Any, value: str) -> List[List[float]]:
@@ -597,7 +738,7 @@ def analyze_pdf(pdf_path: str | Path, verbose: bool = False,
                 # Always inspect selectable text; do not rasterize text pages.
                 if native_text:
                     page_text_parts.append(native_text)
-                    for detection in detect_text(native_text):
+                    for detection in detect_text_with_ai(native_text):
                         item = dict(detection)
                         item['page'] = page_number
                         item['source'] = 'pdf_text'
@@ -621,16 +762,11 @@ def analyze_pdf(pdf_path: str | Path, verbose: bool = False,
                         page_text_parts.append(ocr_text)
 
                     # Detect line-level values first so each hit can retain its OCR box.
-                    for ocr_item in ocr_items:
-                        for detection in detect_text(ocr_item['text'], ocr_item.get('box')):
-                            item = dict(detection)
-                            item['page'] = page_number
-                            item['source'] = 'ocr'
-                            item['confidence'] = min(
-                                _safe_float(item.get('confidence'), 0.9),
-                                _safe_float(ocr_item.get('confidence'), 0.8),
-                            )
-                            detections.append(item)
+                    for detection in detect_with_ai(ocr_items):
+                        item = dict(detection)
+                        item['page'] = page_number
+                        item['source'] = 'ocr'
+                        detections.append(item)
 
                     # Catch values that span OCR lines; only attach a box when matched.
                     if ocr_text:
@@ -651,6 +787,9 @@ def analyze_pdf(pdf_path: str | Path, verbose: bool = False,
                 else:
                     text_page_count += 1
 
+                # Photos / QR codes are images, not text: scan them separately.
+                detections.extend(_detect_pdf_visuals(page, page_number))
+
                 all_text.append('\n'.join(page_text_parts))
                 if verbose:
                     elapsed = time.perf_counter() - page_start
@@ -660,16 +799,19 @@ def analyze_pdf(pdf_path: str | Path, verbose: bool = False,
         document.close()
 
     detections = _deduplicate_pdf_items(detections)
-    context = analyze_context(
-        [{'text': '\n'.join(all_text), 'confidence': 1.0, 'box': None}],
+    # Same assessment function as images and text files.
+    risk = _assess_document(
         detections,
+        [{'text': '\n'.join(all_text), 'confidence': 1.0, 'box': None}],
     )
-    scored_detections = score_detections(detections)
-    risk = calculate_document_risk(detections)
+    context = {
+        'sector': risk.get('sector', 'UNKNOWN'),
+        'confidence': risk.get('sector_confidence', 0.0),
+        'matched_keywords': risk.get('sector_matched_keywords', []),
+    }
+    scored_detections = risk['detections']
 
-    # The scorer may return a new list; attach stable UI indices and page numbers.
-    if not isinstance(scored_detections, list):
-        scored_detections = risk.get('detections', detections)
+    # Attach stable UI indices and page numbers.
     for index, item in enumerate(scored_detections):
         item['index'] = index
         item['page'] = int(item.get('page', 1) or 1)
