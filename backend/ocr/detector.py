@@ -19,9 +19,11 @@ Why this is faster than the old version
 
 Environment variables
 ---------------------
-PRIVISCAN_OCR_MAX_SIDE   default 2560. Only larger images are shrunk. Set 0 to never
+PRIVISCAN_OCR_MAX_SIDE   default 1600. Only larger images are shrunk. Set 0 to never
                          shrink (best accuracy, slowest). Lower = faster, but small
                          text may be misread.
+PRIVISCAN_OCR_RETRY      "1" (default): if a shrunk image gives almost no text, OCR it
+                         again at PRIVISCAN_OCR_RETRY_MAX_SIDE (default 2560).
 PRIVISCAN_OCR_MKLDNN     "1" to enable oneDNN (faster, but crashes on some
                          PaddlePaddle builds - default "0")
 PRIVISCAN_OCR_MODEL      "mobile" (default, faster) or "server" (original, more accurate)
@@ -32,10 +34,17 @@ from __future__ import annotations
 
 import os
 import statistics
+import time
 from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
 
-OCR_MAX_SIDE = int(os.environ.get("PRIVISCAN_OCR_MAX_SIDE", "2560"))
+OCR_MAX_SIDE = int(os.environ.get("PRIVISCAN_OCR_MAX_SIDE", "1600"))
+# If the shrunk image gives (almost) no text, try once more at this larger size.
+OCR_RETRY = os.environ.get("PRIVISCAN_OCR_RETRY", "1") != "0"
+OCR_RETRY_MAX_SIDE = int(os.environ.get("PRIVISCAN_OCR_RETRY_MAX_SIDE", "2560"))
+
+# Filled by extract_text(): where the OCR time went (read by analyze.py for the timing report).
+LAST_TIMINGS: Dict[str, Any] = {}
 USE_MKLDNN = os.environ.get("PRIVISCAN_OCR_MKLDNN", "0") == "1"
 OCR_MODEL = os.environ.get("PRIVISCAN_OCR_MODEL", "mobile").lower()
 CPU_THREADS = int(os.environ.get("PRIVISCAN_OCR_THREADS", str(min(os.cpu_count() or 4, 8))))
@@ -140,15 +149,16 @@ def _load_image(image_path: str):
         return None
 
 
-def _shrink(image) -> Tuple[Any, float]:
-    """Shrink so the longest side is <= OCR_MAX_SIDE. Returns (image, scale<=1)."""
+def _shrink(image, max_side: Optional[int] = None) -> Tuple[Any, float]:
+    """Shrink so the longest side is <= max_side. Returns (image, scale<=1)."""
     import cv2
 
+    limit = OCR_MAX_SIDE if max_side is None else max_side
     height, width = image.shape[:2]
     longest = max(height, width)
-    if OCR_MAX_SIDE <= 0 or longest <= OCR_MAX_SIDE:
+    if limit <= 0 or longest <= limit:
         return image, 1.0
-    scale = OCR_MAX_SIDE / float(longest)
+    scale = limit / float(longest)
     resized = cv2.resize(
         image,
         (max(1, int(round(width * scale))), max(1, int(round(height * scale)))),
@@ -188,23 +198,8 @@ def _reading_order(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 # OCR EXTRACTION
 # ============================================================
 
-def extract_text(image_path: str) -> List[Dict[str, Any]]:
-    """
-    Extract text, confidence and bounding boxes from an image.
-
-    Returns:
-        [{"text": "Email: test@example.com", "confidence": 0.998,
-          "box": [left, top, right, bottom]}]   # coordinates of the ORIGINAL image
-    """
-    image_path = str(image_path)
-    ocr = get_ocr()
-
-    source: Any = image_path
-    scale = 1.0
-    image = _load_image(image_path)
-    if image is not None:
-        source, scale = _shrink(image)
-
+def _predict_items(ocr: Any, source: Any, scale: float) -> List[Dict[str, Any]]:
+    """Run the OCR model once and convert its output (boxes back to original size)."""
     extracted: List[Dict[str, Any]] = []
 
     for result in ocr.predict(source):
@@ -241,6 +236,56 @@ def extract_text(image_path: str) -> List[Dict[str, Any]]:
                 "confidence": round(confidence, 4),
                 "box": box,
             })
+
+    return extracted
+
+
+def extract_text(image_path: str) -> List[Dict[str, Any]]:
+    """
+    Extract text, confidence and bounding boxes from an image.
+
+    Returns:
+        [{"text": "Email: test@example.com", "confidence": 0.998,
+          "box": [left, top, right, bottom]}]   # coordinates of the ORIGINAL image
+    """
+    started = time.perf_counter()
+    image_path = str(image_path)
+    ocr = get_ocr()
+    timings: Dict[str, Any] = {}
+
+    source: Any = image_path
+    scale = 1.0
+    original_size = None
+    image = _load_image(image_path)
+    if image is not None:
+        original_size = (image.shape[1], image.shape[0])
+        source, scale = _shrink(image)
+    timings["prepare"] = round(time.perf_counter() - started, 3)
+
+    step = time.perf_counter()
+    extracted = _predict_items(ocr, source, scale)
+    timings["model"] = round(time.perf_counter() - step, 3)
+
+    # A shrunk image that gives (almost) no text may simply have tiny text:
+    # try once more at a larger size.
+    if OCR_RETRY and image is not None and scale < 1.0 and len(extracted) < 3:
+        retry_source, retry_scale = _shrink(image, OCR_RETRY_MAX_SIDE)
+        if retry_scale > scale:
+            step = time.perf_counter()
+            retry_items = _predict_items(ocr, retry_source, retry_scale)
+            timings["retry_model"] = round(time.perf_counter() - step, 3)
+            if len(retry_items) > len(extracted):
+                extracted, source, scale = retry_items, retry_source, retry_scale
+
+    sent = (source.shape[1], source.shape[0]) if hasattr(source, "shape") else None
+    timings.update(
+        total=round(time.perf_counter() - started, 3),
+        lines=len(extracted),
+        original_size=original_size,
+        size_sent_to_model=sent,
+    )
+    LAST_TIMINGS.clear()
+    LAST_TIMINGS.update(timings)
 
     return _reading_order(extracted)
 

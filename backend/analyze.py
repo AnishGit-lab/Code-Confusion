@@ -461,8 +461,23 @@ def analyze_image(
     timings["risk"] = round(time.perf_counter() - step, 3)
     timings["total"] = round(time.perf_counter() - started, 3)
 
+    # Where the time went (details come from the OCR and AI modules).
+    try:
+        from backend.ocr import detector as _ocr_module
+        from backend.detection import ai_detector as _ai_module
+
+        timings["ocr_detail"] = dict(_ocr_module.LAST_TIMINGS)
+        timings["gliner_detail"] = dict(_ai_module.LAST_TIMINGS)
+    except Exception:
+        pass
+
+    print(
+        f"[PriviScan] image analyzed in {timings['total']}s | OCR {timings['ocr']}s | "
+        f"detection {timings['text_detection']}s | face/QR {timings.get('vision')}s | "
+        f"risk {timings['risk']}s"
+    )
     if verbose or os.environ.get("PRIVISCAN_DEBUG") == "1":
-        print(f"Timings (seconds): {timings}")
+        print(f"Timings (details): {timings}")
 
     if verbose:
         print(f"Detections : {scored['total_detections']}")

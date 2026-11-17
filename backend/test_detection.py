@@ -77,5 +77,47 @@ two = len([d for d in detect_from_ocr_results(ocr) if d["type"] == "EMAIL"]) == 
 passed += two
 print(("PASS  " if two else "FAIL  ") + "same email in two places keeps two boxes")
 
-total = len(CASES) + 1
+# ---- PDF / text path WITH the AI model (a fake model, so no download needed) ----
+import io, contextlib
+
+
+def model_tests():
+    import backend.detection.ai_detector as ai
+
+    class FakeModel:
+        def batch_predict_entities(self, texts, labels, threshold=0.5, **kw):
+            out = []
+            for text in texts:
+                found = []
+                if text == "Smishing":
+                    found.append({"label": "person name", "text": "Smishing", "score": 0.67})
+                if text.startswith("Maria Garcia"):
+                    found.append({"label": "person name", "text": "Maria Garcia", "score": 0.93})
+                if text.startswith("OCR / Computer Vision"):
+                    found.append({"label": "person name", "text": "Pillow", "score": 0.90})
+                out.append(found)
+            return out
+
+    ai._GLINER_MODEL = FakeModel()
+    ai.get_gliner_model = lambda: ai._GLINER_MODEL
+    text = "Smishing\nOCR / Computer Vision: PaddleOCR, OpenCV, Pillow\nMaria Garcia is a student here.\nStudent ID: 2024891090"
+    log = io.StringIO()
+    with contextlib.redirect_stdout(log):
+        found = ai.detect_text_with_ai(text)
+    names = [d["value"] for d in found if d["type"] == "NAME"]
+    results = [
+        ("model path ran without an error", "ERROR" not in log.getvalue() and "Traceback" not in log.getvalue()),
+        ("confident two-word name from the model is found", "Maria Garcia" in names),
+        ("one-word heading 'Smishing' is NOT a name", "Smishing" not in names),
+        ("tool name 'Pillow' is NOT a name", "Pillow" not in names),
+    ]
+    return results
+
+
+model_results = model_tests()
+for name, ok in model_results:
+    passed += ok
+    print(("PASS  " if ok else "FAIL  ") + name)
+
+total = len(CASES) + 1 + len(model_results)
 print(f"\n{passed}/{total} passed")

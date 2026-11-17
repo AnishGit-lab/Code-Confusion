@@ -19,7 +19,7 @@ PRIVISCAN_GLINER_MODEL    default "urchade/gliner_small-v2.1"
 PRIVISCAN_GLINER_LABELS   "core" (default: person name + address) or "full"
 PRIVISCAN_GLINER_BATCH    batch size, default 16
 PRIVISCAN_GLINER_THRESHOLD  default 0.55
-PRIVISCAN_GLINER_MAX_LINES  default 30 (max lines sent to the model per page)
+PRIVISCAN_GLINER_MAX_LINES  default 16 (max lines sent to the model per page)
 PRIVISCAN_GLINER_NAME_THRESHOLD  default 0.65 (minimum model score for a NAME)
 PRIVISCAN_GLINER_TEXT_NAME_THRESHOLD  default 0.85 (same, for PDF / text files)
 PRIVISCAN_DEBUG           "1" prints how many items each stage found
@@ -29,7 +29,9 @@ from __future__ import annotations
 
 import os
 import re
+import time
 import traceback
+import warnings
 from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, Iterable, List, Optional
@@ -46,12 +48,13 @@ USE_GLINER = os.environ.get("PRIVISCAN_USE_GLINER", "1") != "0"
 LABEL_SET = os.environ.get("PRIVISCAN_GLINER_LABELS", "core").lower()
 BATCH_SIZE = max(1, int(os.environ.get("PRIVISCAN_GLINER_BATCH", "16")))
 THRESHOLD = float(os.environ.get("PRIVISCAN_GLINER_THRESHOLD", "0.55"))
-MAX_NER_LINES = max(1, int(os.environ.get("PRIVISCAN_GLINER_MAX_LINES", "30")))
+MAX_NER_LINES = max(1, int(os.environ.get("PRIVISCAN_GLINER_MAX_LINES", "16")))
 # A name needs a more confident model score than an address (UI text such as
 # "View All" is often tagged with a low score).
 NAME_THRESHOLD = float(os.environ.get("PRIVISCAN_GLINER_NAME_THRESHOLD", "0.65"))
 DEBUG = os.environ.get("PRIVISCAN_DEBUG", "0") == "1"
 
+LAST_TIMINGS: Dict[str, Any] = {}   # read by analyze.py for the timing report
 _GLINER_MODEL = None
 _GLINER_LOAD_LOCK = Lock()
 _GLINER_FAILED = False
@@ -157,7 +160,12 @@ def get_gliner_model():
             return None
         try:
             print(f"Loading GLiNER model: {MODEL_NAME}")
-            _GLINER_MODEL = GLiNER.from_pretrained(MODEL_NAME)
+            try:
+                # Use the local cache first: no network check, so it starts faster
+                # (and works offline). Falls back to a normal download if not cached.
+                _GLINER_MODEL = GLiNER.from_pretrained(MODEL_NAME, local_files_only=True)
+            except Exception:
+                _GLINER_MODEL = GLiNER.from_pretrained(MODEL_NAME)
             print("GLiNER model loaded successfully.")
         except Exception as exc:  # network / cache problems
             print(f"WARNING: Could not load GLiNER model: {exc}")
@@ -256,7 +264,7 @@ def _ner_candidates(
             continue
 
         # long sentences are unlikely to be a bare name / address field
-        if len(text) > 90:
+        if len(text) > (90 if item.get("native") else 70):
             continue
 
         candidates.append(index)
@@ -365,6 +373,11 @@ def _validate_entity(detection_type: str, value: str) -> bool:
     return False
 
 
+warnings.filterwarnings(
+    "ignore", message=".*batch_predict_entities is deprecated.*", category=FutureWarning
+)
+
+
 def _predict_batch(model, texts: List[str]) -> List[List[Dict[str, Any]]]:
     """One model call per batch (falls back to per-line calls if unsupported)."""
     results: List[List[Dict[str, Any]]] = []
@@ -396,7 +409,14 @@ def detect_with_gliner(
         return []  # nothing for the model to do -> big time saving
 
     texts = [items[i]["text"] for i in indexes]
+    model_started = time.perf_counter()
     predictions = _predict_batch(model, texts)
+    LAST_TIMINGS.clear()
+    LAST_TIMINGS.update(
+        gliner_seconds=round(time.perf_counter() - model_started, 3),
+        gliner_lines=len(texts),
+        ocr_lines=len(items),
+    )
 
     detections: List[Dict[str, Any]] = []
     for index, entities in zip(indexes, predictions):
@@ -408,6 +428,8 @@ def detect_with_gliner(
                 continue
             if not _validate_entity(detection_type, value):
                 continue
+
+            score = float(entity.get("score", 0.0))
             if (
                 item.get("native")
                 and detection_type == "NAME"
@@ -415,7 +437,6 @@ def detect_with_gliner(
             ):
                 continue
 
-            score = float(entity.get("score", 0.0))
             if detection_type == "NAME":
                 if score < NAME_THRESHOLD:
                     continue
