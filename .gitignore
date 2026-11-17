@@ -29,3 +29,21 @@ uploads/
 .DS_Store
 Thumbs.db
 "@ | Set-Content .gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Build files
+build/
+dist/
+*.spec
+
+# Logs
+*.log
+
+# Generated protected files
+protected/*
+!protected/.gitkeep
